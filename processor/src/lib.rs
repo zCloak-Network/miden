@@ -6,8 +6,8 @@ use vm_core::{
         Script,
     },
     AdviceInjector, DebugOptions, Felt, FieldElement, Operation, ProgramInputs, StackTopState,
-    StarkField, Word, AUX_TRACE_WIDTH, MIN_STACK_DEPTH, MIN_TRACE_LEN, NUM_STACK_HELPER_COLS,
-    RANGE_CHECK_TRACE_WIDTH, STACK_TRACE_WIDTH, SYS_TRACE_WIDTH,
+    StarkField, Word, AUX_TRACE_WIDTH, DECODER_TRACE_WIDTH, MIN_STACK_DEPTH, MIN_TRACE_LEN,
+    NUM_STACK_HELPER_COLS, RANGE_CHECK_TRACE_WIDTH, STACK_TRACE_WIDTH, SYS_TRACE_WIDTH,
 };
 
 mod operations;
@@ -54,6 +54,7 @@ pub use debug::{VmState, VmStateIterator};
 // ================================================================================================
 
 type SysTrace = [Vec<Felt>; SYS_TRACE_WIDTH];
+type DecoderTrace = [Vec<Felt>; DECODER_TRACE_WIDTH];
 type StackTrace = [Vec<Felt>; STACK_TRACE_WIDTH];
 type RangeCheckTrace = [Vec<Felt>; RANGE_CHECK_TRACE_WIDTH];
 type AuxTableTrace = [Vec<Felt>; AUX_TRACE_WIDTH]; // TODO: potentially rename to AuxiliaryTrace
@@ -306,8 +307,8 @@ impl Process {
         self.memory.get_value(addr)
     }
 
-    pub fn to_components(self) -> (System, Stack, RangeChecker, AuxTable) {
+    pub fn to_components(self) -> (System, Decoder, Stack, RangeChecker, AuxTable) {
         let aux_table = AuxTable::new(self.hasher, self.bitwise, self.memory);
-        (self.system, self.stack, self.range, aux_table)
+        (self.system, self.decoder, self.stack, self.range, aux_table)
     }
 }
