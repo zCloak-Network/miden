@@ -134,7 +134,9 @@ impl Decoder {
     }
 
     pub fn execute_user_op(&mut self, op: Operation) {
-        self.append_opcode(op);
+        if !op.is_decorator() {
+            self.append_opcode(op);
+        }
     }
 
     pub fn end_span(&mut self, _block: &Span) {
