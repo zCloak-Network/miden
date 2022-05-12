@@ -1,5 +1,10 @@
-use vm_core::FieldElement;
-use super::{ExecutionError, Felt, Join, Loop, OpBatch, Operation, Process, Span, Split};
+use super::{
+    ExecutionError, Felt, Join, Loop, OpBatch, Operation, Process, Span, Split, MIN_TRACE_LEN,
+};
+use vm_core::{FieldElement, Word};
+
+mod trace;
+use trace::DecoderTrace;
 
 // DECODER PROCESS EXTENSION
 // ================================================================================================
@@ -11,8 +16,8 @@ impl Process {
     pub(super) fn start_join_block(&mut self, block: &Join) -> Result<(), ExecutionError> {
         self.execute_op(Operation::Noop)?;
 
-        // TODO: get address from hasher
-        let addr = Felt::ZERO;
+        let hasher_state = [Felt::ZERO; 12];
+        let (addr, _result) = self.hasher.hash(hasher_state);
         self.decoder.start_join(block, addr);
 
         Ok(())
@@ -33,8 +38,8 @@ impl Process {
         let condition = self.stack.peek();
         self.execute_op(Operation::Drop)?;
 
-        // TODO: get address from hasher
-        let addr = Felt::ZERO;
+        let hasher_state = [Felt::ZERO; 12];
+        let (addr, _result) = self.hasher.hash(hasher_state);
         self.decoder.start_split(block, addr, condition);
 
         Ok(())
@@ -54,8 +59,8 @@ impl Process {
     pub(super) fn start_span_block(&mut self, block: &Span) -> Result<(), ExecutionError> {
         self.execute_op(Operation::Noop)?;
 
-        // TODO: get address from hasher
-        let addr = Felt::ZERO;
+        let hasher_state = [Felt::ZERO; 12];
+        let (addr, _result) = self.hasher.hash(hasher_state);
         self.decoder.start_span(block, addr);
 
         Ok(())
@@ -74,116 +79,99 @@ impl Process {
 // ================================================================================================
 /// TODO: add docs
 pub struct Decoder {
-    addr_trace: Vec<Felt>,
-    op_bits_trace: [Vec<Felt>; NUM_OP_BITS],
-    is_span_trace: Vec<Felt>,
-    hasher_trace: [Vec<Felt>; HASHER_WIDTH],
-    group_count_trace: Vec<Felt>,
+    block_stack: BlockStack,
+    trace: DecoderTrace,
 }
 
 impl Decoder {
     pub fn new() -> Self {
         Self {
-            addr_trace: Vec::with_capacity(MIN_TRACE_LEN),
-            op_bits_trace: new_array_vec(MIN_TRACE_LEN),
-            is_span_trace: Vec::with_capacity(MIN_TRACE_LEN),
-            hasher_trace: new_array_vec(MIN_TRACE_LEN),
-            group_count_trace: Vec::with_capacity(MIN_TRACE_LEN),
+            block_stack: BlockStack::new(),
+            trace: DecoderTrace::new(),
         }
     }
 
     // JOIN BLOCK
     // --------------------------------------------------------------------------------------------
 
-    pub fn start_join(&mut self, _block: &Join, _addr: Felt) {}
+    pub fn start_join(&mut self, block: &Join, addr: Felt) {
+        let parent_addr = self.block_stack.push(addr);
+        let left_child_hash: Word = block.first().hash().into();
+        let right_child_hash: Word = block.second().hash().into();
+        self.trace
+            .append_join_row(parent_addr, left_child_hash, right_child_hash);
+    }
 
-    pub fn end_join(&mut self, _block: &Join) {
-        self.append_opcode(Operation::End);
+    pub fn end_join(&mut self, block: &Join) {
+        let block_info = self.block_stack.pop();
+        let block_hash: Word = block.hash().into();
+        self.trace.append_end_row(block_info.addr, block_hash);
     }
 
     // SPLIT BLOCK
     // --------------------------------------------------------------------------------------------
 
-    pub fn start_split(&mut self, _block: &Split, _addr: Felt, _condition: Felt) {}
+    pub fn start_split(&mut self, block: &Split, addr: Felt, _condition: Felt) {
+        let parent_addr = self.block_stack.push(addr);
+        let left_child_hash: Word = block.on_true().hash().into();
+        let right_child_hash: Word = block.on_false().hash().into();
+        self.trace
+            .append_split_row(parent_addr, left_child_hash, right_child_hash);
+    }
 
-    pub fn end_split(&mut self, _block: &Split) {
-        self.append_opcode(Operation::End);
+    pub fn end_split(&mut self, block: &Split) {
+        let block_info = self.block_stack.pop();
+        let block_hash: Word = block.hash().into();
+        self.trace.append_end_row(block_info.addr, block_hash);
     }
 
     // LOOP BLOCK
     // --------------------------------------------------------------------------------------------
 
     pub fn start_loop(&mut self, _block: &Loop, _condition: Felt) {
-        self.append_opcode(Operation::Loop);
+        // TODO: implement
     }
 
     pub fn repeat(&mut self, _block: &Loop) {
-        self.append_opcode(Operation::Repeat);
+        // TODO: implement
     }
 
     pub fn end_loop(&mut self, _block: &Loop) {
-        self.append_opcode(Operation::End);
+        // TODO: implement
     }
 
     // SPAN BLOCK
     // --------------------------------------------------------------------------------------------
-    pub fn start_span(&mut self, _block: &Span, _addr: Felt) {}
+    pub fn start_span(&mut self, _block: &Span, addr: Felt) {
+        let parent_addr = self.block_stack.push(addr);
+        self.trace.append_span_row(parent_addr);
+    }
 
     pub fn respan(&mut self, _op_batch: &OpBatch) {
-        self.append_opcode(Operation::Respan);
+        // TODO: implement
     }
 
     pub fn execute_user_op(&mut self, op: Operation) {
         if !op.is_decorator() {
-            self.append_opcode(op);
+            self.trace.append_op_row(self.block_stack.peek_addr(), op);
         }
     }
 
-    pub fn end_span(&mut self, _block: &Span) {
-        self.append_opcode(Operation::End);
+    pub fn end_span(&mut self, block: &Span) {
+        let block_info = self.block_stack.pop();
+        let block_hash: Word = block.hash().into();
+        self.trace.append_end_row(block_info.addr, block_hash);
     }
 
     // TRACE GENERATIONS
     // --------------------------------------------------------------------------------------------
 
     /// TODO: add docs
-    pub fn into_trace(mut self, trace_len: usize, _num_rand_rows: usize) -> DecoderTrace {
-        let mut trace = Vec::new();
-
-        self.addr_trace.resize(trace_len, Felt::ZERO);
-        trace.push(self.addr_trace);
-
-        // insert HALT opcode into unfilled rows of ob_bits columns
-        let halt_opcode = Operation::Halt.op_code().expect("missing opcode");
-        for (i, mut column) in self.op_bits_trace.into_iter().enumerate() {
-            let value = Felt::from((halt_opcode >> i) & 1);
-            column.resize(trace_len, value);
-            trace.push(column);
-        }
-
-        self.is_span_trace.resize(trace_len, Felt::ZERO);
-        trace.push(self.is_span_trace);
-
-        for mut column in self.hasher_trace {
-            column.resize(trace_len, Felt::ZERO);
-            trace.push(column);
-        }
-
-        self.group_count_trace.resize(trace_len, Felt::ZERO);
-        trace.push(self.group_count_trace);
-
-        trace.try_into().expect("failed to convert vector to array")
-    }
-
-    // HELPER FUNCTIONS
-    // --------------------------------------------------------------------------------------------
-
-    fn append_opcode(&mut self, op: Operation) {
-        let op_code = op.op_code().expect("missing opcode");
-        for i in 0..7 {
-            let bit = Felt::from((op_code >> i) & 1);
-            self.op_bits_trace[i].push(bit);
-        }
+    pub fn into_trace(self, trace_len: usize, num_rand_rows: usize) -> super::DecoderTrace {
+        self.trace
+            .into_vec(trace_len, num_rand_rows)
+            .try_into()
+            .expect("failed to convert vector to array")
     }
 }
 
@@ -191,4 +179,42 @@ impl Default for Decoder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// BLOCK INFO
+// ================================================================================================
+
+pub struct BlockStack {
+    blocks: Vec<BlockInfo>,
+}
+
+impl BlockStack {
+    pub fn new() -> Self {
+        Self { blocks: Vec::new() }
+    }
+
+    pub fn push(&mut self, addr: Felt) -> Felt {
+        let parent_addr = if self.blocks.is_empty() {
+            Felt::ZERO
+        } else {
+            self.blocks[self.blocks.len() - 1].addr
+        };
+        self.blocks.push(BlockInfo { addr, parent_addr });
+
+        parent_addr
+    }
+
+    pub fn pop(&mut self) -> BlockInfo {
+        self.blocks.pop().expect("block stack is empty")
+    }
+
+    pub fn peek_addr(&self) -> Felt {
+        self.blocks.last().expect("block stack is empty").addr
+    }
+}
+
+#[allow(dead_code)]
+pub struct BlockInfo {
+    addr: Felt,
+    parent_addr: Felt,
 }

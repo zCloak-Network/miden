@@ -1,4 +1,4 @@
-use super::{DecoderTrace, Felt, FieldElement, Operation, NUM_OP_BITS};
+use super::{super::DecoderTrace, Felt, FieldElement, Operation, NUM_OP_BITS};
 use crate::{trace::NUM_RAND_ROWS, ExecutionTrace, Process, ProgramInputs};
 use vm_core::{program::blocks::CodeBlock, StarkField, DECODER_TRACE_RANGE};
 
