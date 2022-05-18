@@ -50,6 +50,12 @@ pub use errors::ExecutionError;
 mod debug;
 pub use debug::{VmState, VmStateIterator};
 
+// CONSTANTS
+// ================================================================================================
+
+// TODO: get from core
+const OP_BATCH_SIZE: usize = 8;
+
 // TYPE ALIASES
 // ================================================================================================
 
@@ -71,7 +77,7 @@ pub fn execute(script: &Script, inputs: &ProgramInputs) -> Result<ExecutionTrace
     Ok(ExecutionTrace::new(process, *script.hash()))
 }
 
-/// Returns an iterator that allows callers to step through each exceution and inspect
+/// Returns an iterator that allows callers to step through each execution and inspect
 /// vm state information along side.
 pub fn execute_iter(script: &Script, inputs: &ProgramInputs) -> VmStateIterator {
     let mut process = Process::new_debug(inputs.clone());
@@ -261,10 +267,12 @@ impl Process {
             self.execute_op(op)?;
 
             // if the operation carries an immediate value, the value is stored at the next group
-            // pointer; so, we advance the pointer to the following group
+            // pointer; so, we advance the pointer to the following group and also update the
+            // number of remaining operation groups in the span
             let has_imm = op.imm_value().is_some();
             if has_imm {
                 next_group_idx += 1;
+                self.decoder.decrement_span_group_count();
             }
 
             // determine if we've executed all non-decorator operations in a group
@@ -285,6 +293,13 @@ impl Process {
                 group_idx = next_group_idx;
                 next_group_idx += 1;
                 op_idx = 0;
+
+                // we also need to update the number of remaining operation groups in the span,
+                // and if we are not at the end of a batch, set up the next group for processing
+                self.decoder.decrement_span_group_count();
+                if group_idx < OP_BATCH_SIZE {
+                    self.decoder.start_op_group(batch.groups()[group_idx]);
+                }
             } else {
                 // if we are not at the end of the group, just increment the operation index
                 op_idx += 1;

@@ -1,41 +1,69 @@
-use super::{super::DecoderTrace, Felt, FieldElement, Operation, NUM_OP_BITS};
-use crate::{trace::NUM_RAND_ROWS, ExecutionTrace, Process, ProgramInputs};
-use vm_core::{program::blocks::CodeBlock, StarkField, DECODER_TRACE_RANGE};
+use super::{super::DecoderTrace, Felt, Operation, NUM_OP_BITS};
+use crate::{ExecutionTrace, Process, ProgramInputs};
+use core::ops::Range;
+use vm_core::{program::blocks::CodeBlock, utils::range, StarkField, DECODER_TRACE_RANGE};
 
 // CONSTANTS
 // ================================================================================================
 
 /// TODO: move to core?
 const OP_BITS_OFFSET: usize = 1;
+const OP_BITS_RANGE: Range<usize> = range(OP_BITS_OFFSET, NUM_OP_BITS);
 
 // TESTS
 // ================================================================================================
 
 #[test]
 fn join_block() {
-    let span1 = CodeBlock::new_span(vec![Operation::Push(Felt::ONE)]);
-    let span2 = CodeBlock::new_span(vec![Operation::Drop]);
+    let value1 = Felt::new(3);
+    let value2 = Felt::new(5);
+    let span1 = CodeBlock::new_span(vec![Operation::Push(value1), Operation::Mul]);
+    let span2 = CodeBlock::new_span(vec![Operation::Push(value2), Operation::Add]);
     let program = CodeBlock::new_join([span1, span2]);
 
     let trace = build_trace(&[], &program);
-    let trace_len = trace[0].len();
+    let _trace_len = trace[0].len();
 
     // --- test op bits columns -----------------------------------------------
 
     // opcodes should be: JOIN SPAN PUSH END SPAN DROP END END
     assert!(contains_op(&trace, 0, Operation::Join));
     assert!(contains_op(&trace, 1, Operation::Span));
-    assert!(contains_op(&trace, 2, Operation::Push(Felt::ONE)));
-    assert!(contains_op(&trace, 3, Operation::End));
-    assert!(contains_op(&trace, 4, Operation::Span));
-    assert!(contains_op(&trace, 5, Operation::Drop));
-    assert!(contains_op(&trace, 6, Operation::End));
-    assert!(contains_op(&trace, 7, Operation::End));
+    assert!(contains_op(&trace, 2, Operation::Push(value1)));
+    assert!(contains_op(&trace, 3, Operation::Mul));
+    assert!(contains_op(&trace, 4, Operation::End));
+    assert!(contains_op(&trace, 5, Operation::Span));
+    assert!(contains_op(&trace, 6, Operation::Push(value2)));
+    assert!(contains_op(&trace, 7, Operation::Add));
+    assert!(contains_op(&trace, 8, Operation::End));
+    assert!(contains_op(&trace, 9, Operation::End));
+}
 
-    // all remaining opcodes should be HALT
-    for i in 8..trace_len - NUM_RAND_ROWS {
-        assert!(contains_op(&trace, i, Operation::Halt));
-    }
+#[test]
+fn span_block() {
+    let program = CodeBlock::new_span(vec![
+        Operation::Push(Felt::new(1)),
+        Operation::Push(Felt::new(2)),
+        Operation::Push(Felt::new(3)),
+        Operation::Push(Felt::new(4)),
+        Operation::Mul,
+        Operation::Add,
+        Operation::Drop,
+        Operation::Push(Felt::new(5)),
+        Operation::Mul,
+        Operation::Add,
+        Operation::Push(Felt::new(6)),
+        Operation::Inv,
+    ]);
+    //let span2 = CodeBlock::new_span(vec![Operation::Add]);
+    //let program = CodeBlock::new_join([span1, span2]);
+
+    let trace = build_trace(&[], &program);
+    assert!(contains_op(&trace, 0, Operation::Span));
+    //for i in 0..20 {
+    //    print_row(&trace, i);
+    //}
+    //assert!(false, "all good!");
 }
 
 // HELPER FUNCTIONS
@@ -70,4 +98,22 @@ fn read_opcode(trace: &DecoderTrace, row_idx: usize) -> u8 {
         result += op_bit << i;
     }
     result as u8
+}
+
+#[allow(dead_code)]
+fn print_row(trace: &DecoderTrace, idx: usize) {
+    let mut row = Vec::new();
+    for column in trace.iter() {
+        row.push(column[idx].as_int());
+    }
+    println!(
+        "{}\t{}\t{:?} {} {: <16x?} {: <16x?} {}",
+        idx,
+        row[0],
+        &row[OP_BITS_RANGE],
+        row[8],
+        &row[9..13],
+        &row[13..17],
+        row[17]
+    );
 }

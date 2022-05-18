@@ -1,10 +1,22 @@
 use super::{
-    ExecutionError, Felt, Join, Loop, OpBatch, Operation, Process, Span, Split, MIN_TRACE_LEN,
+    ExecutionError, Felt, Join, Loop, OpBatch, Operation, Process, Span, Split, StarkField,
+    MIN_TRACE_LEN,
 };
 use vm_core::{FieldElement, Word};
 
 mod trace;
 use trace::DecoderTrace;
+
+#[cfg(test)]
+mod tests;
+
+// CONSTANTS
+// ================================================================================================
+
+const NUM_OP_BITS: usize = Operation::OP_BITS;
+
+// TODO: get from core
+const HASHER_WIDTH: usize = 8;
 
 // DECODER PROCESS EXTENSION
 // ================================================================================================
@@ -59,7 +71,22 @@ impl Process {
     pub(super) fn start_span_block(&mut self, block: &Span) -> Result<(), ExecutionError> {
         self.execute_op(Operation::Noop)?;
 
-        let hasher_state = [Felt::ZERO; 12];
+        let first_batch = &block.op_batches()[0].groups();
+
+        let hasher_state = [
+            first_batch[0],
+            first_batch[1],
+            first_batch[2],
+            first_batch[3],
+            first_batch[4],
+            first_batch[5],
+            first_batch[6],
+            first_batch[7],
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+            Felt::ZERO,
+        ];
         let (addr, _result) = self.hasher.hash(hasher_state);
         self.decoder.start_span(block, addr);
 
@@ -80,6 +107,7 @@ impl Process {
 /// TODO: add docs
 pub struct Decoder {
     block_stack: BlockStack,
+    span_context: Option<SpanContext>,
     trace: DecoderTrace,
 }
 
@@ -87,6 +115,7 @@ impl Decoder {
     pub fn new() -> Self {
         Self {
             block_stack: BlockStack::new(),
+            span_context: None,
             trace: DecoderTrace::new(),
         }
     }
@@ -98,14 +127,19 @@ impl Decoder {
         let parent_addr = self.block_stack.push(addr);
         let left_child_hash: Word = block.first().hash().into();
         let right_child_hash: Word = block.second().hash().into();
-        self.trace
-            .append_join_row(parent_addr, left_child_hash, right_child_hash);
+        self.trace.append_row(
+            parent_addr,
+            Operation::Join,
+            left_child_hash,
+            right_child_hash,
+        );
     }
 
     pub fn end_join(&mut self, block: &Join) {
         let block_info = self.block_stack.pop();
         let block_hash: Word = block.hash().into();
-        self.trace.append_end_row(block_info.addr, block_hash);
+        self.trace
+            .append_row(block_info.addr, Operation::End, block_hash, [Felt::ZERO; 4]);
     }
 
     // SPLIT BLOCK
@@ -115,14 +149,19 @@ impl Decoder {
         let parent_addr = self.block_stack.push(addr);
         let left_child_hash: Word = block.on_true().hash().into();
         let right_child_hash: Word = block.on_false().hash().into();
-        self.trace
-            .append_split_row(parent_addr, left_child_hash, right_child_hash);
+        self.trace.append_row(
+            parent_addr,
+            Operation::Split,
+            left_child_hash,
+            right_child_hash,
+        );
     }
 
     pub fn end_split(&mut self, block: &Split) {
         let block_info = self.block_stack.pop();
         let block_hash: Word = block.hash().into();
-        self.trace.append_end_row(block_info.addr, block_hash);
+        self.trace
+            .append_row(block_info.addr, Operation::End, block_hash, [Felt::ZERO; 4]);
     }
 
     // LOOP BLOCK
@@ -142,25 +181,57 @@ impl Decoder {
 
     // SPAN BLOCK
     // --------------------------------------------------------------------------------------------
-    pub fn start_span(&mut self, _block: &Span, addr: Felt) {
+    pub fn start_span(&mut self, block: &Span, addr: Felt) {
+        debug_assert!(self.span_context.is_none(), "already in span");
+
         let parent_addr = self.block_stack.push(addr);
-        self.trace.append_span_row(parent_addr);
+        let first_op_batch = &block.op_batches()[0].groups();
+        let num_op_groups = get_num_op_groups_in_span(block);
+        self.trace
+            .append_span_start(parent_addr, addr, first_op_batch, num_op_groups);
+
+        self.span_context = Some(SpanContext {
+            num_groups_left: num_op_groups - Felt::ONE,
+            group_ops_left: first_op_batch[0],
+        });
     }
 
-    pub fn respan(&mut self, _op_batch: &OpBatch) {
-        // TODO: implement
+    pub fn respan(&mut self, op_batch: &OpBatch) {
+        self.trace.append_respan(op_batch.groups());
+
+        let ctx = self.span_context.as_mut().expect("not in span");
+        ctx.num_groups_left += Felt::ONE;
+        ctx.group_ops_left = op_batch.groups()[0];
+    }
+
+    pub fn decrement_span_group_count(&mut self) {
+        self.span_context
+            .as_mut()
+            .expect("not in span")
+            .num_groups_left -= Felt::ONE;
+    }
+
+    pub fn start_op_group(&mut self, op_group: Felt) {
+        self.span_context
+            .as_mut()
+            .expect("not in span")
+            .group_ops_left = op_group;
     }
 
     pub fn execute_user_op(&mut self, op: Operation) {
-        if !op.is_decorator() {
-            self.trace.append_op_row(self.block_stack.peek_addr(), op);
-        }
+        debug_assert!(!op.is_decorator(), "op is a decorator");
+        let ctx = self.span_context.as_mut().expect("not in span");
+
+        ctx.group_ops_left = remove_opcode_from_group(ctx.group_ops_left, op);
+
+        self.trace
+            .append_user_op(op, ctx.num_groups_left, ctx.group_ops_left);
     }
 
     pub fn end_span(&mut self, block: &Span) {
-        let block_info = self.block_stack.pop();
+        let _block_info = self.block_stack.pop();
         let block_hash: Word = block.hash().into();
-        self.trace.append_end_row(block_info.addr, block_hash);
+        self.trace.append_span_end(block_hash, Felt::ZERO);
     }
 
     // TRACE GENERATIONS
@@ -208,6 +279,7 @@ impl BlockStack {
         self.blocks.pop().expect("block stack is empty")
     }
 
+    #[allow(dead_code)]
     pub fn peek_addr(&self) -> Felt {
         self.blocks.last().expect("block stack is empty").addr
     }
@@ -217,4 +289,36 @@ impl BlockStack {
 pub struct BlockInfo {
     addr: Felt,
     parent_addr: Felt,
+}
+
+// SPAN CONTEXT
+// ================================================================================================
+
+pub struct SpanContext {
+    group_ops_left: Felt,
+    num_groups_left: Felt,
+}
+
+impl Default for SpanContext {
+    fn default() -> Self {
+        Self {
+            group_ops_left: Felt::ZERO,
+            num_groups_left: Felt::ZERO,
+        }
+    }
+}
+
+// HELPER FUNCTIONS
+// ================================================================================================
+
+fn get_num_op_groups_in_span(block: &Span) -> Felt {
+    let result = block.op_batches().iter().fold(0usize, |acc, batch| {
+        acc + batch.num_groups().next_power_of_two()
+    });
+    Felt::new(result as u64)
+}
+
+fn remove_opcode_from_group(op_group: Felt, op: Operation) -> Felt {
+    let opcode = op.op_code().expect("no opcode") as u64;
+    Felt::new((op_group.as_int() - opcode) >> NUM_OP_BITS)
 }
