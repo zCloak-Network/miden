@@ -186,13 +186,14 @@ fn print_row(trace: &DecoderTrace, idx: usize) {
         row.push(column[idx].as_int());
     }
     println!(
-        "{}\t{}\t{:?} {} {: <16x?} {: <16x?} {}",
+        "{}\t{}\t{:?} {} {: <16x?} {: <16x?} {} {}",
         idx,
         row[0],
         &row[OP_BITS_RANGE],
         row[8],
         &row[9..13],
         &row[13..17],
-        row[17]
+        row[17],
+        row[18]
     );
 }

@@ -262,7 +262,7 @@ impl Process {
             }
 
             // decode and execute the operation
-            self.decoder.execute_user_op(op);
+            self.decoder.execute_user_op(op, op_idx);
             self.execute_op(op)?;
 
             // if the operation carries an immediate value, the value is stored at the next group
@@ -284,7 +284,7 @@ impl Process {
                     // is enough room in the group to execute a NOOP (if there isn't, there is a
                     // bug somewhere in the assembler)
                     debug_assert!(op_idx < OP_GROUP_SIZE - 1, "invalid op index");
-                    self.decoder.execute_user_op(Operation::Noop);
+                    self.decoder.execute_user_op(Operation::Noop, op_idx + 1);
                     self.execute_op(Operation::Noop)?;
                 }
 
@@ -307,7 +307,7 @@ impl Process {
         // make sure we execute the required number of operation groups; this would happen when
         // the actual number of operation groups was not a power of two
         for group_idx in group_idx..num_batch_groups {
-            self.decoder.execute_user_op(Operation::Noop);
+            self.decoder.execute_user_op(Operation::Noop, 0);
             self.execute_op(Operation::Noop)?;
 
             // if we are not at the last group yet, set up the decoder for decoding the next

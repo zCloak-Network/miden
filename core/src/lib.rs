@@ -52,7 +52,7 @@ pub const FMP_COL_IDX: usize = SYS_TRACE_OFFSET + 1;
 
 // decoder trace
 pub const DECODER_TRACE_OFFSET: usize = SYS_TRACE_OFFSET + SYS_TRACE_WIDTH;
-pub const DECODER_TRACE_WIDTH: usize = 18;
+pub const DECODER_TRACE_WIDTH: usize = 19;
 pub const DECODER_TRACE_RANGE: Range<usize> = range(DECODER_TRACE_OFFSET, DECODER_TRACE_WIDTH);
 
 // Stack trace

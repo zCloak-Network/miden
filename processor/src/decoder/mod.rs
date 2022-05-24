@@ -218,7 +218,7 @@ impl Decoder {
         ctx.num_groups_left -= Felt::ONE;
     }
 
-    pub fn execute_user_op(&mut self, op: Operation) {
+    pub fn execute_user_op(&mut self, op: Operation, op_idx: usize) {
         debug_assert!(!op.is_decorator(), "op is a decorator");
         let block = self.block_stack.peek();
         let ctx = self.span_context.as_mut().expect("not in span");
@@ -231,6 +231,7 @@ impl Decoder {
             block.parent_addr,
             ctx.num_groups_left,
             ctx.group_ops_left,
+            Felt::from(op_idx as u32),
         );
     }
 

@@ -17,6 +17,7 @@ pub struct DecoderTrace {
     in_span_trace: Vec<Felt>,
     hasher_trace: [Vec<Felt>; HASHER_WIDTH],
     group_count_trace: Vec<Felt>,
+    op_idx_trace: Vec<Felt>,
 }
 
 impl DecoderTrace {
@@ -27,6 +28,7 @@ impl DecoderTrace {
             in_span_trace: Vec::with_capacity(MIN_TRACE_LEN),
             hasher_trace: new_array_vec(MIN_TRACE_LEN),
             group_count_trace: Vec::with_capacity(MIN_TRACE_LEN),
+            op_idx_trace: Vec::with_capacity(MIN_TRACE_LEN),
         }
     }
 
@@ -52,6 +54,7 @@ impl DecoderTrace {
 
         self.in_span_trace.push(Felt::ZERO);
         self.group_count_trace.push(Felt::ZERO);
+        self.op_idx_trace.push(Felt::ZERO);
     }
 
     /// Append a trace row marking the start of a SPAN block.
@@ -64,6 +67,7 @@ impl DecoderTrace {
     /// - Set is_span to ZERO. is_span will be set to one in the following row.
     /// - Set hasher state to op groups of the first op batch of the SPAN.
     /// - Set op group count to the total number of op groups in the SPAN.
+    /// - Set operation index register to ZERO.
     pub fn append_span_start(
         &mut self,
         parent_addr: Felt,
@@ -77,6 +81,7 @@ impl DecoderTrace {
             self.hasher_trace[i].push(op_group);
         }
         self.group_count_trace.push(num_op_groups);
+        self.op_idx_trace.push(Felt::ZERO);
     }
 
     /// Appends a trace row marking a RESPAN operation.
@@ -88,16 +93,16 @@ impl DecoderTrace {
     /// - Set in_span to ONE.
     /// - Set hasher state to op groups of the next op batch of the SPAN.
     /// - Copy over op group count from the previous row.
+    /// - Set operation index register to ZERO.
     pub fn append_respan(&mut self, op_batch: &[Felt; OP_BATCH_SIZE]) {
         self.addr_trace.push(self.last_addr());
         self.append_opcode(Operation::Respan);
         self.in_span_trace.push(Felt::ONE);
-
         for (i, &op_group) in op_batch.iter().enumerate() {
             self.hasher_trace[i].push(op_group);
         }
-
         self.group_count_trace.push(self.last_group_count());
+        self.op_idx_trace.push(Felt::ZERO);
     }
 
     /// Append a trace row for a user operation.
@@ -113,6 +118,7 @@ impl DecoderTrace {
     /// - Set the number of groups remaining to be processed. This number of groups changes if
     ///   in the previous row an operation with an immediate value was executed or if this
     ///   operation is a start of a new operation group.
+    /// - Set the operation's index withing the current operation group.
     pub fn append_user_op(
         &mut self,
         op: Operation,
@@ -120,6 +126,7 @@ impl DecoderTrace {
         parent_addr: Felt,
         num_groups_left: Felt,
         group_ops_left: Felt,
+        op_idx: Felt,
     ) {
         self.addr_trace.push(span_addr);
         self.append_opcode(op);
@@ -132,6 +139,7 @@ impl DecoderTrace {
         }
 
         self.group_count_trace.push(num_groups_left);
+        self.op_idx_trace.push(op_idx);
     }
 
     /// Append a trace row marking the end of a SPAN block.
@@ -144,6 +152,7 @@ impl DecoderTrace {
     /// - Put a flag indicating whether the SPAN block was a body of a loop into the 5 register
     ///   of the hasher state.
     /// - Copy over op group count from the previous row. This group count must be ZERO.
+    /// - Set operation index register to ZERO.
     pub fn append_span_end(&mut self, span_hash: Word, is_loop_body: Felt) {
         debug_assert!(is_loop_body.as_int() <= 1, "invalid loop body");
 
@@ -165,6 +174,8 @@ impl DecoderTrace {
         let last_group_count = self.last_group_count();
         debug_assert!(last_group_count == Felt::ZERO, "group count not zero");
         self.group_count_trace.push(last_group_count);
+
+        self.op_idx_trace.push(Felt::ZERO);
     }
 
     // TRACE GENERATION
@@ -195,6 +206,9 @@ impl DecoderTrace {
 
         self.group_count_trace.resize(trace_len, Felt::ZERO);
         trace.push(self.group_count_trace);
+
+        self.op_idx_trace.resize(trace_len, Felt::ZERO);
+        trace.push(self.op_idx_trace);
 
         trace
     }
