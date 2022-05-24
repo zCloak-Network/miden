@@ -7,7 +7,7 @@ use winterfell::{EvaluationFrame, Matrix, Serializable, Trace, TraceLayout};
 // ================================================================================================
 
 /// Number of rows at the end of an execution trace which are injected with random values.
-pub const NUM_RAND_ROWS: usize = 1;
+const NUM_RAND_ROWS: usize = 1;
 
 // TYPE ALIASES
 // ================================================================================================
@@ -28,6 +28,12 @@ pub struct ExecutionTrace {
 }
 
 impl ExecutionTrace {
+    // CONSTANTS
+    // --------------------------------------------------------------------------------------------
+
+    /// Number of rows at the end of an execution trace which are injected with random values.
+    pub const NUM_RAND_ROWS: usize = NUM_RAND_ROWS;
+
     // CONSTRUCTOR
     // --------------------------------------------------------------------------------------------
     /// Builds an execution trace for the provided process.

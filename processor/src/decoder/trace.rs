@@ -1,24 +1,22 @@
 use super::{Felt, Operation, Word, HASHER_WIDTH, MIN_TRACE_LEN, NUM_OP_BITS};
-use vm_core::{utils::new_array_vec, FieldElement, StarkField};
+use vm_core::{program::blocks::OP_BATCH_SIZE, utils::new_array_vec, FieldElement, StarkField};
 
 // CONSTANTS
 // ================================================================================================
 
-// TODO: get from core
-const OP_BATCH_SIZE: usize = 8;
-
 const OP_GROUP_IDX: usize = 0;
+const SPAN_PARENT_ADDR_IDX: usize = 1;
 
 // DECODER TRACE
 // ================================================================================================
 
+/// TODO: add docs
 pub struct DecoderTrace {
     addr_trace: Vec<Felt>,
     op_bits_trace: [Vec<Felt>; NUM_OP_BITS],
     in_span_trace: Vec<Felt>,
     hasher_trace: [Vec<Felt>; HASHER_WIDTH],
     group_count_trace: Vec<Felt>,
-    span_context: SpanContext,
 }
 
 impl DecoderTrace {
@@ -29,7 +27,6 @@ impl DecoderTrace {
             in_span_trace: Vec::with_capacity(MIN_TRACE_LEN),
             hasher_trace: new_array_vec(MIN_TRACE_LEN),
             group_count_trace: Vec::with_capacity(MIN_TRACE_LEN),
-            span_context: SpanContext::default(),
         }
     }
 
@@ -70,7 +67,6 @@ impl DecoderTrace {
     pub fn append_span_start(
         &mut self,
         parent_addr: Felt,
-        span_addr: Felt,
         first_op_batch: &[Felt; OP_BATCH_SIZE],
         num_op_groups: Felt,
     ) {
@@ -81,37 +77,17 @@ impl DecoderTrace {
             self.hasher_trace[i].push(op_group);
         }
         self.group_count_trace.push(num_op_groups);
-
-        // set span cursor to the new span and decrement op group count as we immediately start
-        // reading the first group of the first op batch in the span
-        self.span_context.new_span(span_addr);
     }
 
-    /// Append a trace row for a user operation.
+    /// Appends a trace row marking a RESPAN operation.
     ///
-    /// When we execute a user operation in a SPAN block, we do the following:
-    /// - Set the address of the row to the address of the span block.
-    /// - Set op_bits to the opcode of the executed operation.
-    /// - Set is_span to ONE.
-    /// - Subtract the opcode value from the last op group value (which is located in the first
-    ///   register of the hasher state) and divide the result by 2^7.
-    /// - Set the remaining registers of the hasher state to ZEROs.
-    /// - Decrement op group count if this was specified by the previously executed operation.
-    pub fn append_user_op(&mut self, op: Operation, num_groups_left: Felt, group_ops_left: Felt) {
-        // set span address
-        self.addr_trace.push(self.span_context.addr());
-        self.append_opcode(op);
-        self.in_span_trace.push(Felt::ONE);
-
-        self.group_count_trace.push(num_groups_left);
-        self.hasher_trace[OP_GROUP_IDX].push(group_ops_left);
-
-        for column in self.hasher_trace.iter_mut().skip(1) {
-            column.push(Felt::ZERO);
-        }
-    }
-
-    ///
+    /// When a RESPAN operation is executed, we do the following:
+    /// - Copy over the block address from the previous row. The SPAN address will be update in
+    ///   the following row.
+    /// - Set op_bits to RESPAN opcode.
+    /// - Set in_span to ONE.
+    /// - Set hasher state to op groups of the next op batch of the SPAN.
+    /// - Copy over op group count from the previous row.
     pub fn append_respan(&mut self, op_batch: &[Felt; OP_BATCH_SIZE]) {
         self.addr_trace.push(self.last_addr());
         self.append_opcode(Operation::Respan);
@@ -122,13 +98,45 @@ impl DecoderTrace {
         }
 
         self.group_count_trace.push(self.last_group_count());
+    }
 
-        self.span_context.respan();
+    /// Append a trace row for a user operation.
+    ///
+    /// When we execute a user operation in a SPAN block, we do the following:
+    /// - Set the address of the row to the address of the span block.
+    /// - Set op_bits to the opcode of the executed operation.
+    /// - Set is_span to ONE.
+    /// - Set the first hasher state register to the aggregation of remaining operations to be
+    ///   executed in the current operation group.
+    /// - Set the second hasher state register to the address of the SPAN's parent block.
+    /// - Set the remaining hasher state registers to ZEROs.
+    /// - Set the number of groups remaining to be processed. This number of groups changes if
+    ///   in the previous row an operation with an immediate value was executed or if this
+    ///   operation is a start of a new operation group.
+    pub fn append_user_op(
+        &mut self,
+        op: Operation,
+        span_addr: Felt,
+        parent_addr: Felt,
+        num_groups_left: Felt,
+        group_ops_left: Felt,
+    ) {
+        self.addr_trace.push(span_addr);
+        self.append_opcode(op);
+        self.in_span_trace.push(Felt::ONE);
+
+        self.hasher_trace[OP_GROUP_IDX].push(group_ops_left);
+        self.hasher_trace[SPAN_PARENT_ADDR_IDX].push(parent_addr);
+        for column in self.hasher_trace.iter_mut().skip(2) {
+            column.push(Felt::ZERO);
+        }
+
+        self.group_count_trace.push(num_groups_left);
     }
 
     /// Append a trace row marking the end of a SPAN block.
     ///
-    /// When the SPAN block is ending, we do the following things:
+    /// When the SPAN block is ending, we do the following:
     /// - Copy over the block address from the previous row.
     /// - Set op_bits to END opcode.
     /// - Set in_span to ZERO to indicate that the span block is completed.
@@ -155,7 +163,7 @@ impl DecoderTrace {
         }
 
         let last_group_count = self.last_group_count();
-        // TODO: debug_assert!(last_group_count == Felt::ZERO, "group count not zero");
+        debug_assert!(last_group_count == Felt::ZERO, "group count not zero");
         self.group_count_trace.push(last_group_count);
     }
 
@@ -213,30 +221,5 @@ impl DecoderTrace {
             let bit = Felt::from((op_code >> i) & 1);
             self.op_bits_trace[i].push(bit);
         }
-    }
-}
-
-// SPAN CONTEXT
-// ================================================================================================
-
-struct SpanContext {
-    addr: Felt,
-}
-
-impl SpanContext {
-    pub fn new_span(&mut self, addr: Felt) {
-        self.addr = addr;
-    }
-
-    pub fn respan(&mut self) {}
-
-    pub fn addr(&self) -> Felt {
-        self.addr
-    }
-}
-
-impl Default for SpanContext {
-    fn default() -> Self {
-        Self { addr: Felt::ZERO }
     }
 }

@@ -17,6 +17,7 @@ const NUM_OP_BITS: usize = Operation::OP_BITS;
 
 // TODO: get from core
 const HASHER_WIDTH: usize = 8;
+const HASHER_CYCLE_LEN: Felt = Felt::new(8);
 
 // DECODER PROCESS EXTENSION
 // ================================================================================================
@@ -183,12 +184,11 @@ impl Decoder {
     // --------------------------------------------------------------------------------------------
     pub fn start_span(&mut self, block: &Span, addr: Felt) {
         debug_assert!(self.span_context.is_none(), "already in span");
-
         let parent_addr = self.block_stack.push(addr);
         let first_op_batch = &block.op_batches()[0].groups();
         let num_op_groups = get_num_op_groups_in_span(block);
         self.trace
-            .append_span_start(parent_addr, addr, first_op_batch, num_op_groups);
+            .append_span_start(parent_addr, first_op_batch, num_op_groups);
 
         self.span_context = Some(SpanContext {
             num_groups_left: num_op_groups - Felt::ONE,
@@ -199,39 +199,46 @@ impl Decoder {
     pub fn respan(&mut self, op_batch: &OpBatch) {
         self.trace.append_respan(op_batch.groups());
 
+        let block = self.block_stack.pop();
+        self.block_stack.push(block.addr + HASHER_CYCLE_LEN);
+
         let ctx = self.span_context.as_mut().expect("not in span");
-        ctx.num_groups_left += Felt::ONE;
+        ctx.num_groups_left -= Felt::ONE;
         ctx.group_ops_left = op_batch.groups()[0];
     }
 
-    pub fn decrement_span_group_count(&mut self) {
-        self.span_context
-            .as_mut()
-            .expect("not in span")
-            .num_groups_left -= Felt::ONE;
+    pub fn consume_imm_value(&mut self) {
+        let ctx = self.span_context.as_mut().expect("not a span");
+        ctx.num_groups_left -= Felt::ONE
     }
 
     pub fn start_op_group(&mut self, op_group: Felt) {
-        self.span_context
-            .as_mut()
-            .expect("not in span")
-            .group_ops_left = op_group;
+        let ctx = self.span_context.as_mut().expect("not a span");
+        ctx.group_ops_left = op_group;
+        ctx.num_groups_left -= Felt::ONE;
     }
 
     pub fn execute_user_op(&mut self, op: Operation) {
         debug_assert!(!op.is_decorator(), "op is a decorator");
+        let block = self.block_stack.peek();
         let ctx = self.span_context.as_mut().expect("not in span");
 
         ctx.group_ops_left = remove_opcode_from_group(ctx.group_ops_left, op);
 
-        self.trace
-            .append_user_op(op, ctx.num_groups_left, ctx.group_ops_left);
+        self.trace.append_user_op(
+            op,
+            block.addr,
+            block.parent_addr,
+            ctx.num_groups_left,
+            ctx.group_ops_left,
+        );
     }
 
     pub fn end_span(&mut self, block: &Span) {
         let _block_info = self.block_stack.pop();
         let block_hash: Word = block.hash().into();
         self.trace.append_span_end(block_hash, Felt::ZERO);
+        self.span_context = None;
     }
 
     // TRACE GENERATIONS
@@ -279,13 +286,12 @@ impl BlockStack {
         self.blocks.pop().expect("block stack is empty")
     }
 
-    #[allow(dead_code)]
-    pub fn peek_addr(&self) -> Felt {
-        self.blocks.last().expect("block stack is empty").addr
+    pub fn peek(&self) -> &BlockInfo {
+        self.blocks.last().expect("block stack is empty")
     }
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, Copy)]
 pub struct BlockInfo {
     addr: Felt,
     parent_addr: Felt,

@@ -50,12 +50,6 @@ pub use errors::ExecutionError;
 mod debug;
 pub use debug::{VmState, VmStateIterator};
 
-// CONSTANTS
-// ================================================================================================
-
-// TODO: get from core
-const OP_BATCH_SIZE: usize = 8;
-
 // TYPE ALIASES
 // ================================================================================================
 
@@ -253,6 +247,11 @@ impl Process {
         let mut group_idx = 0;
         let mut next_group_idx = 1;
 
+        // round up the number of groups to be processed to the next power of two; we do this
+        // because the processor requires the number of groups to be either 1, 2, 4, or 8; if
+        // the actual number of groups is smaller, we'll pad the batch with NOOPs at the end
+        let num_batch_groups = batch.num_groups().next_power_of_two();
+
         // execute operations in the batch one by one
         for &op in batch.ops() {
             if op.is_decorator() {
@@ -272,7 +271,7 @@ impl Process {
             let has_imm = op.imm_value().is_some();
             if has_imm {
                 next_group_idx += 1;
-                self.decoder.decrement_span_group_count();
+                self.decoder.consume_imm_value();
             }
 
             // determine if we've executed all non-decorator operations in a group
@@ -294,10 +293,9 @@ impl Process {
                 next_group_idx += 1;
                 op_idx = 0;
 
-                // we also need to update the number of remaining operation groups in the span,
-                // and if we are not at the end of a batch, set up the next group for processing
-                self.decoder.decrement_span_group_count();
-                if group_idx < OP_BATCH_SIZE {
+                // if we haven't reached the end of the batch yet, set up the decoder for
+                // decoding the next operation group
+                if group_idx < num_batch_groups {
                     self.decoder.start_op_group(batch.groups()[group_idx]);
                 }
             } else {
@@ -306,11 +304,18 @@ impl Process {
             }
         }
 
-        // for each operation batch we must execute number of groups which is a power of 2; so
-        // if the number of groups is not a power of 2, we pad each missing group with a NOOP
-        for _ in group_idx..batch.num_groups().next_power_of_two() {
+        // make sure we execute the required number of operation groups; this would happen when
+        // the actual number of operation groups was not a power of two
+        for group_idx in group_idx..num_batch_groups {
             self.decoder.execute_user_op(Operation::Noop);
             self.execute_op(Operation::Noop)?;
+
+            // if we are not at the last group yet, set up the decoder for decoding the next
+            // operation groups. the groups were are processing are just NOOPs - so, the op group
+            // value is ZERO
+            if group_idx < num_batch_groups - 1 {
+                self.decoder.start_op_group(Felt::ZERO);
+            }
         }
 
         Ok(())
