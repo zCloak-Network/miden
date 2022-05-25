@@ -133,8 +133,69 @@ fn span_block_with_respan() {
 
     // --- test op bits columns -----------------------------------------------
     assert!(contains_op(&trace, 0, Operation::Span));
+}
 
-    //for i in 0..30 {
+// LOOP BLOCK TESTS
+// ================================================================================================
+
+#[test]
+fn loop_block() {
+    let loop_body = CodeBlock::new_span(vec![Operation::Pad, Operation::Drop]);
+    let program = CodeBlock::new_loop(loop_body);
+
+    let (trace, trace_len) = build_trace(&[0, 1], &program);
+
+    // --- test op bits columns -----------------------------------------------
+    assert!(contains_op(&trace, 0, Operation::Loop));
+    assert!(contains_op(&trace, 1, Operation::Span));
+    assert!(contains_op(&trace, 2, Operation::Pad));
+    assert!(contains_op(&trace, 3, Operation::Drop));
+    assert!(contains_op(&trace, 4, Operation::End));
+    assert!(contains_op(&trace, 5, Operation::End));
+    for i in 6..trace_len {
+        assert!(contains_op(&trace, i, Operation::Halt));
+    }
+}
+
+#[test]
+fn loop_block_skip() {
+    let loop_body = CodeBlock::new_span(vec![Operation::Pad, Operation::Drop]);
+    let program = CodeBlock::new_loop(loop_body);
+
+    let (trace, trace_len) = build_trace(&[0], &program);
+
+    // --- test op bits columns -----------------------------------------------
+    assert!(contains_op(&trace, 0, Operation::Loop));
+    assert!(contains_op(&trace, 1, Operation::End));
+    for i in 2..trace_len {
+        assert!(contains_op(&trace, i, Operation::Halt));
+    }
+}
+
+#[test]
+fn loop_block_repeat() {
+    let loop_body = CodeBlock::new_span(vec![Operation::Pad, Operation::Drop]);
+    let program = CodeBlock::new_loop(loop_body);
+
+    let (trace, trace_len) = build_trace(&[0, 1, 1], &program);
+
+    // --- test op bits columns -----------------------------------------------
+    assert!(contains_op(&trace, 0, Operation::Loop));
+    assert!(contains_op(&trace, 1, Operation::Span));
+    assert!(contains_op(&trace, 2, Operation::Pad));
+    assert!(contains_op(&trace, 3, Operation::Drop));
+    assert!(contains_op(&trace, 4, Operation::End));
+    assert!(contains_op(&trace, 5, Operation::Repeat));
+    assert!(contains_op(&trace, 6, Operation::Span));
+    assert!(contains_op(&trace, 7, Operation::Pad));
+    assert!(contains_op(&trace, 8, Operation::Drop));
+    assert!(contains_op(&trace, 9, Operation::End));
+    assert!(contains_op(&trace, 10, Operation::End));
+    for i in 11..trace_len {
+        assert!(contains_op(&trace, i, Operation::Halt));
+    }
+
+    //for i in 0..12 {
     //    print_row(&trace, i);
     //}
     //assert!(false, "all good!");

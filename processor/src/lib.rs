@@ -150,13 +150,10 @@ impl Process {
     /// Executes the specified [Split] block.
     #[inline(always)]
     fn execute_split_block(&mut self, block: &Split) -> Result<(), ExecutionError> {
-        // get the top element from the stack here because starting a SPLIT block removes it from
-        // the stack
-        let condition = self.stack.peek();
-        self.start_split_block(block)?;
+        // start the SPLIT block; this also pops the stack and returns the popped element
+        let condition = self.start_split_block(block)?;
 
         // execute either the true or the false branch of the split block based on the condition
-        // retrieved from the top of the stack
         if condition == Felt::ONE {
             self.execute_code_block(block.on_true())?;
         } else if condition == Felt::ZERO {
@@ -171,47 +168,32 @@ impl Process {
     /// Executes the specified [Loop] block.
     #[inline(always)]
     fn execute_loop_block(&mut self, block: &Loop) -> Result<(), ExecutionError> {
-        // start LOOP block; this requires examining the top of the stack to determine whether
-        // the loop's body should be executed.
-        let condition = self.stack.peek();
-        self.decoder.start_loop(block, condition);
+        // start the LOOP block; this also pops the stack and returns the popped element
+        let condition = self.start_loop_block(block)?;
 
-        // if the top of the stack is ONE, execute the loop body; otherwise skip the loop body;
-        // before we execute the loop body we drop the condition from the stack; when the loop
-        // body is not executed, we keep the condition on the stack so that it can be dropped by
-        // the END operation later.
+        // if the top of the stack is ONE, execute the loop body; otherwise skip the loop body
         if condition == Felt::ONE {
-            // drop the condition and execute the loop body at least once
-            self.execute_op(Operation::Drop)?;
+            // execute the loop body at least once
             self.execute_code_block(block.body())?;
 
             // keep executing the loop body until the condition on the top of the stack is no
             // longer ONE; each iteration of the loop is preceded by executing REPEAT operation
             // which drops the condition from the stack
             while self.stack.peek() == Felt::ONE {
-                self.execute_op(Operation::Drop)?;
                 self.decoder.repeat(block);
-
+                self.execute_op(Operation::Drop)?;
                 self.execute_code_block(block.body())?;
             }
+
+            // end the LOOP block and drop the condition from the stack
+            self.end_loop_block(block, true)
         } else if condition == Felt::ZERO {
-            self.execute_op(Operation::Noop)?
+            // end the LOOP block, but don't drop the condition from the stack because it was
+            // already dropped when we started the LOOP block
+            self.end_loop_block(block, false)
         } else {
-            return Err(ExecutionError::NotBinaryValue(condition));
+            Err(ExecutionError::NotBinaryValue(condition))
         }
-
-        // execute END operation; this can be done only if the top of the stack is ZERO, in which
-        // case the top of the stack is dropped
-        if self.stack.peek() == Felt::ZERO {
-            self.execute_op(Operation::Drop)?;
-        } else if condition == Felt::ONE {
-            unreachable!("top of the stack should not be ONE");
-        } else {
-            return Err(ExecutionError::NotBinaryValue(self.stack.peek()));
-        }
-        self.decoder.end_loop(block);
-
-        Ok(())
     }
 
     /// Executes the specified [Span] block.

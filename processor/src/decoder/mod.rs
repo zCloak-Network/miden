@@ -38,30 +38,56 @@ impl Process {
 
     pub(super) fn end_join_block(&mut self, block: &Join) -> Result<(), ExecutionError> {
         self.execute_op(Operation::Noop)?;
-
-        self.decoder.end_join(block);
-
+        self.decoder.end_control_block(block.hash().into());
         Ok(())
     }
 
     // SPLIT BLOCK
     // --------------------------------------------------------------------------------------------
 
-    pub(super) fn start_split_block(&mut self, block: &Split) -> Result<(), ExecutionError> {
+    pub(super) fn start_split_block(&mut self, block: &Split) -> Result<Felt, ExecutionError> {
         let condition = self.stack.peek();
         self.execute_op(Operation::Drop)?;
 
         let hasher_state = [Felt::ZERO; 12];
         let (addr, _result) = self.hasher.hash(hasher_state);
-        self.decoder.start_split(block, addr, condition);
+        self.decoder.start_split(block, addr);
 
-        Ok(())
+        Ok(condition)
     }
 
     pub(super) fn end_split_block(&mut self, block: &Split) -> Result<(), ExecutionError> {
         self.execute_op(Operation::Noop)?;
+        self.decoder.end_control_block(block.hash().into());
+        Ok(())
+    }
 
-        self.decoder.end_split(block);
+    // LOOP BLOCK
+    // --------------------------------------------------------------------------------------------
+
+    pub(super) fn start_loop_block(&mut self, block: &Loop) -> Result<Felt, ExecutionError> {
+        let condition = self.stack.peek();
+        self.execute_op(Operation::Drop)?;
+
+        let hasher_state = [Felt::ZERO; 12];
+        let (addr, _result) = self.hasher.hash(hasher_state);
+        self.decoder.start_loop(block, addr, condition);
+
+        Ok(condition)
+    }
+
+    pub(super) fn end_loop_block(
+        &mut self,
+        block: &Loop,
+        pop_stack: bool,
+    ) -> Result<(), ExecutionError> {
+        if pop_stack {
+            self.execute_op(Operation::Drop)?;
+        } else {
+            self.execute_op(Operation::Noop)?;
+        }
+
+        self.decoder.end_control_block(block.hash().into());
 
         Ok(())
     }
@@ -121,14 +147,14 @@ impl Decoder {
         }
     }
 
-    // JOIN BLOCK
+    // CONTROL BLOCKS
     // --------------------------------------------------------------------------------------------
 
     pub fn start_join(&mut self, block: &Join, addr: Felt) {
-        let parent_addr = self.block_stack.push(addr);
+        let parent_addr = self.block_stack.push(addr, Felt::ZERO);
         let left_child_hash: Word = block.first().hash().into();
         let right_child_hash: Word = block.second().hash().into();
-        self.trace.append_row(
+        self.trace.append_block_start(
             parent_addr,
             Operation::Join,
             left_child_hash,
@@ -136,21 +162,11 @@ impl Decoder {
         );
     }
 
-    pub fn end_join(&mut self, block: &Join) {
-        let block_info = self.block_stack.pop();
-        let block_hash: Word = block.hash().into();
-        self.trace
-            .append_row(block_info.addr, Operation::End, block_hash, [Felt::ZERO; 4]);
-    }
-
-    // SPLIT BLOCK
-    // --------------------------------------------------------------------------------------------
-
-    pub fn start_split(&mut self, block: &Split, addr: Felt, _condition: Felt) {
-        let parent_addr = self.block_stack.push(addr);
+    pub fn start_split(&mut self, block: &Split, addr: Felt) {
+        let parent_addr = self.block_stack.push(addr, Felt::ZERO);
         let left_child_hash: Word = block.on_true().hash().into();
         let right_child_hash: Word = block.on_false().hash().into();
-        self.trace.append_row(
+        self.trace.append_block_start(
             parent_addr,
             Operation::Split,
             left_child_hash,
@@ -158,33 +174,34 @@ impl Decoder {
         );
     }
 
-    pub fn end_split(&mut self, block: &Split) {
-        let block_info = self.block_stack.pop();
-        let block_hash: Word = block.hash().into();
-        self.trace
-            .append_row(block_info.addr, Operation::End, block_hash, [Felt::ZERO; 4]);
-    }
-
-    // LOOP BLOCK
-    // --------------------------------------------------------------------------------------------
-
-    pub fn start_loop(&mut self, _block: &Loop, _condition: Felt) {
-        // TODO: implement
+    pub fn start_loop(&mut self, block: &Loop, addr: Felt, is_loop: Felt) {
+        let parent_addr = self.block_stack.push(addr, is_loop);
+        let loop_body_hash: Word = block.body().hash().into();
+        self.trace.append_block_start(
+            parent_addr,
+            Operation::Loop,
+            loop_body_hash,
+            [Felt::ZERO; 4],
+        );
     }
 
     pub fn repeat(&mut self, _block: &Loop) {
-        // TODO: implement
+        let loop_addr = self.block_stack.peek().addr;
+        self.trace.append_loop_repeat(loop_addr);
     }
 
-    pub fn end_loop(&mut self, _block: &Loop) {
-        // TODO: implement
+    pub fn end_control_block(&mut self, block_hash: Word) {
+        let block_info = self.block_stack.pop();
+        self.trace
+            .append_block_end(block_hash, block_info.is_loop_body, block_info.is_loop);
     }
 
     // SPAN BLOCK
     // --------------------------------------------------------------------------------------------
+
     pub fn start_span(&mut self, block: &Span, addr: Felt) {
         debug_assert!(self.span_context.is_none(), "already in span");
-        let parent_addr = self.block_stack.push(addr);
+        let parent_addr = self.block_stack.push(addr, Felt::ZERO);
         let first_op_batch = &block.op_batches()[0].groups();
         let num_op_groups = get_num_op_groups_in_span(block);
         self.trace
@@ -200,7 +217,8 @@ impl Decoder {
         self.trace.append_respan(op_batch.groups());
 
         let block = self.block_stack.pop();
-        self.block_stack.push(block.addr + HASHER_CYCLE_LEN);
+        self.block_stack
+            .push(block.addr + HASHER_CYCLE_LEN, block.is_loop);
 
         let ctx = self.span_context.as_mut().expect("not in span");
         ctx.num_groups_left -= Felt::ONE;
@@ -236,9 +254,10 @@ impl Decoder {
     }
 
     pub fn end_span(&mut self, block: &Span) {
-        let _block_info = self.block_stack.pop();
+        let block_info = self.block_stack.pop();
         let block_hash: Word = block.hash().into();
-        self.trace.append_span_end(block_hash, Felt::ZERO);
+        self.trace
+            .append_span_end(block_hash, block_info.is_loop_body);
         self.span_context = None;
     }
 
@@ -272,14 +291,20 @@ impl BlockStack {
         Self { blocks: Vec::new() }
     }
 
-    pub fn push(&mut self, addr: Felt) -> Felt {
-        let parent_addr = if self.blocks.is_empty() {
-            Felt::ZERO
+    pub fn push(&mut self, addr: Felt, is_loop: Felt) -> Felt {
+        let (parent_addr, is_loop_body) = if self.blocks.is_empty() {
+            (Felt::ZERO, Felt::ZERO)
         } else {
-            self.blocks[self.blocks.len() - 1].addr
+            let parent = &self.blocks[self.blocks.len() - 1];
+            (parent.addr, parent.is_loop)
         };
-        self.blocks.push(BlockInfo { addr, parent_addr });
 
+        self.blocks.push(BlockInfo {
+            addr,
+            parent_addr,
+            is_loop_body,
+            is_loop,
+        });
         parent_addr
     }
 
@@ -296,6 +321,8 @@ impl BlockStack {
 pub struct BlockInfo {
     addr: Felt,
     parent_addr: Felt,
+    is_loop_body: Felt,
+    is_loop: Felt,
 }
 
 // SPAN CONTEXT
