@@ -1,8 +1,11 @@
 use super::{Felt, FieldElement, StarkField, TraceFragment, Word};
 use core::ops::Range;
-use vm_core::hasher::{
-    Selectors, LINEAR_HASH, MP_VERIFY, MR_UPDATE_NEW, MR_UPDATE_OLD, RETURN_HASH, RETURN_STATE,
-    STATE_WIDTH, TRACE_WIDTH,
+use vm_core::{
+    hasher::{
+        Selectors, LINEAR_HASH, MP_VERIFY, MR_UPDATE_NEW, MR_UPDATE_OLD, RETURN_HASH, RETURN_STATE,
+        STATE_WIDTH, TRACE_WIDTH,
+    },
+    program::blocks::OpBatch,
 };
 
 mod trace;
@@ -83,14 +86,6 @@ impl Hasher {
     // HASHING METHODS
     // --------------------------------------------------------------------------------------------
 
-    /// TODO: add docs
-    pub fn hash(&mut self, mut state: HasherState) -> (Felt, HasherState) {
-        let addr = self.trace.next_row_addr();
-        self.trace
-            .append_permutation(&mut state, LINEAR_HASH, RETURN_HASH, Felt::ZERO, Felt::ZERO);
-        (addr, state)
-    }
-
     /// Applies a single permutation of the hash function to the provided state and records the
     /// execution trace of this computation.
     ///
@@ -106,6 +101,75 @@ impl Hasher {
             Felt::ZERO,
         );
         (addr, state)
+    }
+
+    /// TODO: add docs
+    pub fn hash_2to1(&mut self, h1: Word, h2: Word) -> (Felt, Word) {
+        let addr = self.trace.next_row_addr();
+        // TODO: use more specialized function
+        let mut state = build_merge_state(&h1, &h2, 0);
+        self.trace
+            .append_permutation(&mut state, LINEAR_HASH, RETURN_HASH, Felt::ZERO, Felt::ZERO);
+        let result = state[HASH_RESULT_RANGE]
+            .try_into()
+            .expect("failed to get result from hasher state");
+        (addr, result)
+    }
+
+    /// TODO: add docs
+    pub fn hash_span_block(&mut self, op_batches: &[OpBatch]) -> (Felt, Word) {
+        let addr = self.trace.next_row_addr();
+
+        // TODO: init capacity
+        let mut state = [Felt::ZERO; 12];
+        absorb_into_state(&mut state, op_batches[0].groups());
+
+        // TODO: make more readable
+        let num_batches = op_batches.len();
+        if num_batches == 1 {
+            self.trace.append_permutation(
+                &mut state,
+                LINEAR_HASH,
+                RETURN_HASH,
+                Felt::ZERO,
+                Felt::ZERO,
+            );
+        } else {
+            self.trace.append_permutation(
+                &mut state,
+                LINEAR_HASH,
+                LINEAR_HASH,
+                Felt::ZERO,
+                Felt::ZERO,
+            );
+
+            for batch in op_batches.iter().take(num_batches - 1).skip(1) {
+                absorb_into_state(&mut state, batch.groups());
+                self.trace.append_permutation(
+                    &mut state,
+                    RETURN_HASH,
+                    LINEAR_HASH,
+                    Felt::ZERO,
+                    Felt::ZERO,
+                );
+            }
+            absorb_into_state(&mut state, op_batches[num_batches - 1].groups());
+            self.trace.append_permutation(
+                &mut state,
+                RETURN_HASH,
+                RETURN_HASH,
+                Felt::ZERO,
+                Felt::ZERO,
+            );
+        }
+
+        let result = state[HASH_RESULT_RANGE]
+            .try_into()
+            .expect("failed to get result from hasher state");
+
+        // TODO: verify that the result is equal to the expected result
+
+        (addr, result)
     }
 
     /// Performs Merkle path verification computation and records its execution trace.
@@ -321,4 +385,16 @@ fn build_merge_state(a: &Word, b: &Word, index_bit: u64) -> HasherState {
         ],
         _ => panic!("index bit is not a binary value"),
     }
+}
+
+/// TODO: add comments
+fn absorb_into_state(state: &mut HasherState, values: &[Felt; 8]) {
+    state[4] += values[0];
+    state[5] += values[1];
+    state[6] += values[2];
+    state[7] += values[3];
+    state[8] += values[4];
+    state[9] += values[5];
+    state[10] += values[6];
+    state[11] += values[7];
 }
