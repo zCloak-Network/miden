@@ -150,7 +150,7 @@ impl Process {
         let (addr, _result) = self.hasher.hash_span_block(op_batches);
 
         // make sure the result computed by the hasher is the same as the expected block hash
-        // TODO: debug_assert_eq!(block.hash(), _result.into());
+        debug_assert_eq!(block.hash(), _result.into());
 
         // start decoding the first operation batch; this also appends a row with SPAN operation
         // to th decoder trace. we also need the total number of operation groups so that we can
