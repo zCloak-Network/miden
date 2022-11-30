@@ -1,6 +1,6 @@
 use super::data::{InputFile, OutputFile, ProgramHash, ProofFile};
 use std::path::PathBuf;
-use std::time::Instant;
+// use std::time::Instant;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -39,7 +39,7 @@ impl VerifyCmd {
         let proof = ProofFile::read(&Some(self.proof_file.clone()), &self.proof_file)?;
 
         println!("verifying program...");
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // verify proof
         verifier::verify(
@@ -50,7 +50,7 @@ impl VerifyCmd {
         )
         .map_err(|err| format!("Program failed verification! - {}", err))?;
 
-        println!("Verification complete in {} ms", now.elapsed().as_millis());
+        // println!("Verification complete in {} ms", now.elapsed().as_millis());
 
         Ok(())
     }

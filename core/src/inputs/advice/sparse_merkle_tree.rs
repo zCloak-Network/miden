@@ -4,6 +4,7 @@ use super::{
 };
 use crate::utils::collections::BTreeMap;
 use crate::utils::collections::Vec;
+use serde::{Deserialize, Serialize};
 
 // SPARSE MERKLE TREE
 // ================================================================================================
@@ -13,7 +14,7 @@ use crate::utils::collections::Vec;
 /// recomputed on each new leaf update.
 ///
 /// This struct is intended to be used as one of the variants of the MerkleSet enum.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SparseMerkleTree {
     root: Word,
     depth: u32,
@@ -145,14 +146,14 @@ impl SparseMerkleTree {
 /// Leaves and branch nodes are stored separately in B-tree maps, indexed by key and (key, depth)
 /// respectively. Hashes for blank subtrees at each layer are stored in `empty_hashes`, beginning
 /// with the root hash of an empty tree, and ending with the zero value of a leaf node.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct Store {
     branches: BTreeMap<(u64, u32), BranchNode>,
     leaves: BTreeMap<u64, Word>,
     empty_hashes: Vec<Digest>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 struct BranchNode {
     left: Digest,
     right: Digest,

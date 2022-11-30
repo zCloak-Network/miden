@@ -7,12 +7,14 @@ mod merkle_path_set;
 use merkle_path_set::MerklePathSet;
 mod sparse_merkle_tree;
 use sparse_merkle_tree::SparseMerkleTree;
+use serde::{Deserialize, Serialize};
+
 
 // ADVICE SET
 // ================================================================================================
 
 /// TODO: add docs
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum AdviceSet {
     MerkleTree(MerkleTree),
     SparseMerkleTree(SparseMerkleTree),

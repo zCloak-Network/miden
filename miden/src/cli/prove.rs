@@ -1,7 +1,7 @@
 use super::data::{InputFile, OutputFile, ProgramFile, ProofFile};
 use air::ProofOptions;
 use std::path::PathBuf;
-use std::time::Instant;
+// use std::time::Instant;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -48,7 +48,7 @@ impl ProveCmd {
         let input_data = InputFile::read(&self.input_file, &self.assembly_file)?;
 
         println!("Proving program ...");
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // execute program and generate proof
         let (outputs, proof) = prover::prove(
@@ -59,7 +59,7 @@ impl ProveCmd {
         )
         .map_err(|err| format!("Failed to prove program - {:?}", err))?;
 
-        println!("Program proved in {} ms", now.elapsed().as_millis());
+        // println!("Program proved in {} ms", now.elapsed().as_millis());
 
         // write proof to file
         ProofFile::write(proof, &self.proof_file, &self.assembly_file)?;

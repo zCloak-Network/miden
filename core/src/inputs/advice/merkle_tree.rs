@@ -6,6 +6,7 @@ use crate::utils::collections::Vec;
 use core::slice;
 use math::log2;
 use winter_utils::uninit_vector;
+use serde::{Deserialize, Serialize};
 
 // MERKLE TREE
 // ================================================================================================
@@ -13,7 +14,7 @@ use winter_utils::uninit_vector;
 /// A fully-balanced binary Merkle tree (i.e., a tree where the number of leaves is a power of two).
 ///
 /// This struct is intended to be used as one of the variants of the MerkleSet enum.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MerkleTree {
     nodes: Vec<Word>,
 }

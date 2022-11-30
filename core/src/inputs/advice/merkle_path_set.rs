@@ -1,5 +1,6 @@
 use super::{hasher, AdviceSetError, Felt, FieldElement, Word};
 use crate::utils::collections::{BTreeMap, Vec};
+use serde::{Deserialize, Serialize};
 
 // MERKLE PATH SET
 // ================================================================================================
@@ -7,7 +8,7 @@ use crate::utils::collections::{BTreeMap, Vec};
 /// A set of Merkle paths.
 ///
 /// This struct is intended to be used as one of the variants of the MerkleSet enum.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MerklePathSet {
     root: Word,
     total_depth: u32,

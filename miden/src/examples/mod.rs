@@ -1,5 +1,5 @@
 use miden::{Program, ProgramInputs, ProofOptions, StarkProof};
-use std::time::Instant;
+// use std::time::Instant;
 use structopt::StructOpt;
 
 pub mod fibonacci;
@@ -69,16 +69,16 @@ impl ExampleOptions {
         println!("--------------------------------");
 
         // execute the program and generate the proof of execution
-        let now = Instant::now();
+        // let now = Instant::now();
         let (outputs, proof) =
             miden::prove(&program, &inputs, num_outputs, &proof_options).unwrap();
         println!("--------------------------------");
 
-        println!(
-            "Executed program in {} ms",
-            //hex::encode(program.hash()), // TODO: include into message
-            now.elapsed().as_millis()
-        );
+        // println!(
+        //     "Executed program in {} ms",
+        //     //hex::encode(program.hash()), // TODO: include into message
+        //     now.elapsed().as_millis()
+        // );
         println!("Program output: {:?}", outputs);
         assert_eq!(
             expected_result, outputs,
@@ -97,9 +97,9 @@ impl ExampleOptions {
         // verify that executing a program with a given hash and given inputs
         // results in the expected output
         let proof = StarkProof::from_bytes(&proof_bytes).unwrap();
-        let now = Instant::now();
+        // let now = Instant::now();
         match miden::verify(program.hash(), &pub_inputs, &outputs, proof) {
-            Ok(_) => println!("Execution verified in {} ms", now.elapsed().as_millis()),
+            Ok(_) => println!("Execution verified OK"),
             Err(err) => println!("Failed to verify execution: {}", err),
         }
 

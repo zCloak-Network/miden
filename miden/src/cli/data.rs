@@ -1,8 +1,8 @@
 use assembly::Assembler;
 use prover::StarkProof;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::{fs, io::Write, time::Instant};
+use std::{fs, io::Write};
 use vm_core::{chiplets::hasher::Digest, Program, ProgramInputs};
 use winter_utils::{Deserializable, SliceReader};
 
@@ -155,14 +155,14 @@ impl ProgramFile {
             .map_err(|err| format!("Failed to open program file `{}` - {}", path.display(), err))?;
 
         print!("Compiling program... ");
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // compile program
         let program = Assembler::default()
             .compile(&program_file)
             .map_err(|err| format!("Failed to compile program - {}", err))?;
 
-        println!("done ({} ms)", now.elapsed().as_millis());
+        // println!("done ({} ms)", now.elapsed().as_millis());
 
         Ok(program)
     }

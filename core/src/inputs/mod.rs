@@ -9,7 +9,8 @@ use winter_utils::collections::{BTreeMap, Vec};
 
 mod advice;
 pub use advice::AdviceSet;
-
+extern crate serde;
+use serde::{Deserialize, Serialize};
 // PROGRAM INPUTS
 // ================================================================================================
 
@@ -27,7 +28,7 @@ pub use advice::AdviceSet;
 ///    inputs for instructions which work with Merkle trees.
 ///
 /// TODO: add more detailed explanation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProgramInputs {
     stack_init: Vec<Felt>,
     advice_tape: Vec<Felt>,

@@ -20,6 +20,7 @@ default = ["std"]
 std = ["math/std", "winter-utils/std", "crypto/std"]
 
 [dependencies]
-crypto = { package = "winter-crypto", version = "0.4", default-features = false }
-math = { package = "winter-math", version = "0.4", default-features = false }
-winter-utils = { package = "winter-utils", version = "0.4", default-features = false }
+crypto = { package = "winter-crypto",path = "../winterfell-crypto", version = "0.4", default-features = false }
+math = { package = "winter-math",path = "../winterfell-math", version = "0.4", default-features = false }
+winter-utils = { package = "winter-utils",path = "../winterfell-utils/utils/core", version = "0.4", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }

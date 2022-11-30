@@ -10,7 +10,7 @@ use log::debug;
 #[cfg(feature = "std")]
 use prover::Trace;
 #[cfg(feature = "std")]
-use std::time::Instant;
+// use std::time::Instant;
 
 // EXPORTS
 // ================================================================================================
@@ -50,14 +50,13 @@ pub fn prove(
 
     // execute the program to create an execution trace
     #[cfg(feature = "std")]
-    let now = Instant::now();
+    // let now = Instant::now();
     let trace = processor::execute(program, inputs)?;
     #[cfg(feature = "std")]
     debug!(
-        "Generated execution trace of {} columns and {} steps in {} ms",
+        "Generated execution trace of {} columns and {} steps",
         trace.layout().main_trace_width(),
-        trace.length(),
-        now.elapsed().as_millis()
+        trace.length()
     );
 
     // copy the stack state at the last step to return as output
