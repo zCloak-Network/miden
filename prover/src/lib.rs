@@ -10,7 +10,7 @@ use log::debug;
 #[cfg(feature = "std")]
 use prover::Trace;
 #[cfg(feature = "std")]
-// use std::time::Instant;
+use std::time::Instant;
 
 // EXPORTS
 // ================================================================================================
@@ -50,7 +50,7 @@ pub fn prove(
 
     // execute the program to create an execution trace
     #[cfg(feature = "std")]
-    // let now = Instant::now();
+    let now = Instant::now();
     let trace = processor::execute(program, inputs)?;
     #[cfg(feature = "std")]
     debug!(
