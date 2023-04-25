@@ -13,7 +13,7 @@ $$
 The above is just a partial constraint as it does not show the range checker's part of the constraint, which multiplies the required values into the bus column. It also omits the [selector flag](./op_constraints.md#operation-flags) which is used to turn this constraint on only when executing relevant operations.
 
 ### Checking element validity
-Another primitive which is required by most of the operations described below is checking whether four 16-bit values form a valid field element. Assume $t_0$, $t_1$, $t_2$, and $t_3$ are known to be 16-bit values, and we want to verify that $2^{48} \cdot t_3 + 2^{32} \cdot t_2 + 2^{16} \cdot t_1 + t_0$ is a valid field element. 
+Another primitive which is required by most of the operations described below is checking whether four 16-bit values form a valid field element. Assume $t_0$, $t_1$, $t_2$, and $t_3$ are known to be 16-bit values, and we want to verify that $2^{48} \cdot t_3 + 2^{32} \cdot t_2 + 2^{16} \cdot t_1 + t_0$ is a valid field element.
 
 For simplicity, let's denote:
 
@@ -255,24 +255,6 @@ $$
 In the above, $op_{u32and}$ is the unique [operation label](../chiplets/main.md#operation-labels) of the bitwise `AND` operation.
 
 **Note**: unlike for many other u32 operations, bitwise AND operation does not assume that the values at the top of the stack are smaller than $2^{32}$. This is because the lookup will fail for any inputs which are not 32-bit integers.
-
-The effect of this operation on the rest of the stack is:
-* **Left shift** starting from position $2$.
-
-## U32OR
-Assume $a$ and $b$ are the values at the top of the stack. The `U32OR` operation computes $c \leftarrow (a \lor b)$, where $c$ is the result of performing a bitwise OR on $a$ and $b$. The diagram below illustrates this graphically.
-
-![u32or](../../assets/design/stack/u32_operations/U32OR.png)
-
-To facilitate this operation, we will need to make a request to the chiplet bus $b_{chip}$ by dividing its current value by the value representing bitwise operation request. This can be enforced with the following constraint:
-
-> $$
-b_{chip}' \cdot \left(\alpha_0 + \alpha_1 \cdot op_{u32or} + \alpha_2 \cdot s_0 + \alpha_3 \cdot s_1 +  \alpha_4 \cdot s_0'  \right) = b_{chip} \text{ | degree} = 2
-$$
-
-In the above, $op_{u32or}$ is the unique [operation label](../chiplets/main.md#operation-labels) of the bitwise `OR` operation.
-
-**Note**: unlike for many other u32 operations, bitwise OR operation does not assume that the values at the top of the stack are smaller than $2^{32}$. This is because the lookup will fail for any inputs which are not 32-bit integers.
 
 The effect of this operation on the rest of the stack is:
 * **Left shift** starting from position $2$.

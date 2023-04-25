@@ -5,9 +5,9 @@
 extern crate alloc;
 
 use vm_core::{
-    chiplets::hasher::Digest,
     utils::{collections::Vec, ByteWriter, Serializable},
-    ExtensionOf, CLK_COL_IDX, FMP_COL_IDX, MIN_STACK_DEPTH, STACK_TRACE_OFFSET,
+    ExtensionOf, ProgramInfo, StackInputs, StackOutputs, CLK_COL_IDX, FMP_COL_IDX, ONE,
+    STACK_TRACE_OFFSET, ZERO,
 };
 use winter_air::{
     Air, AirContext, Assertion, AuxTraceRandElements, EvaluationFrame,
@@ -15,17 +15,24 @@ use winter_air::{
 };
 
 mod chiplets;
-mod options;
+mod proof;
 mod range;
+
 mod utils;
 use utils::TransitionConstraintRange;
+
+// exported publicly for benchmarking purposes
+pub mod stack;
 
 // EXPORTS
 // ================================================================================================
 
-pub use options::ProofOptions;
-pub use vm_core::{utils::ToElements, Felt, FieldElement, StarkField};
-pub use winter_air::{FieldExtension, HashFunction};
+pub use proof::{ExecutionProof, HashFunction, ProofOptions};
+pub use vm_core::{
+    utils::{DeserializationError, ToElements},
+    Felt, FieldElement, StarkField,
+};
+pub use winter_air::FieldExtension;
 
 // PROCESSOR AIR
 // ================================================================================================
@@ -33,8 +40,8 @@ pub use winter_air::{FieldExtension, HashFunction};
 /// TODO: add docs
 pub struct ProcessorAir {
     context: AirContext<Felt>,
-    stack_inputs: Vec<Felt>,
-    stack_outputs: Vec<Felt>,
+    stack_inputs: StackInputs,
+    stack_outputs: StackOutputs,
     constraint_ranges: TransitionConstraintRange,
 }
 
@@ -55,6 +62,10 @@ impl Air for ProcessorAir {
             TransitionConstraintDegree::new(1), // clk' = clk + 1
         ];
 
+        // --- stack constraints -------------------------------------------------------------------
+        let mut stack_degrees = stack::get_transition_constraint_degrees();
+        main_degrees.append(&mut stack_degrees);
+
         // --- range checker ----------------------------------------------------------------------
         let mut range_checker_degrees = range::get_transition_constraint_degrees();
         main_degrees.append(&mut range_checker_degrees);
@@ -68,21 +79,18 @@ impl Air for ProcessorAir {
         // Define the transition constraint ranges.
         let constraint_ranges = TransitionConstraintRange::new(
             1,
+            stack::get_transition_constraint_count(),
             range::get_transition_constraint_count(),
             chiplets::get_transition_constraint_count(),
         );
 
         // Define the number of boundary constraints for the main execution trace segment.
         // TODO: determine dynamically
-        let num_main_assertions = 2
-            + pub_inputs.stack_inputs.len()
-            + pub_inputs.stack_outputs.len()
-            + range::NUM_ASSERTIONS
-            + chiplets::NUM_ASSERTIONS;
+        let num_main_assertions =
+            2 + stack::NUM_ASSERTIONS + range::NUM_ASSERTIONS + chiplets::NUM_ASSERTIONS;
 
-        // Define the number of boundary constraints for the auxiliary execution trace segment (used
-        // for multiset checks).
-        let num_aux_assertions = range::NUM_AUX_ASSERTIONS;
+        // Define the number of boundary constraints for the auxiliary execution trace segment.
+        let num_aux_assertions = stack::NUM_AUX_ASSERTIONS + range::NUM_AUX_ASSERTIONS;
 
         // Create the context and set the number of transition constraint exemptions to two; this
         // allows us to inject random values into the last row of the execution trace.
@@ -126,10 +134,8 @@ impl Air for ProcessorAir {
         // first value of fmp is 2^30
         result.push(Assertion::single(FMP_COL_IDX, 0, Felt::new(2u64.pow(30))));
 
-        // stack columns at the first step should be set to stack inputs
-        for (i, &value) in self.stack_inputs.iter().enumerate() {
-            result.push(Assertion::single(STACK_TRACE_OFFSET + i, 0, value));
-        }
+        // add initial assertions for the stack.
+        stack::get_assertions_first_step(&mut result, self.stack_inputs.values());
 
         // Add initial assertions for the range checker.
         range::get_assertions_first_step(&mut result);
@@ -140,10 +146,8 @@ impl Air for ProcessorAir {
         // --- set assertions for the last step ---------------------------------------------------
         let last_step = self.last_step();
 
-        // stack columns at the last step should be set to stack outputs
-        for (i, &value) in self.stack_outputs.iter().enumerate() {
-            result.push(Assertion::single(STACK_TRACE_OFFSET + i, last_step, value));
-        }
+        // add the stack's assertions for the last step.
+        stack::get_assertions_last_step(&mut result, last_step, &self.stack_outputs);
 
         // Add the range checker's assertions for the last step.
         range::get_assertions_last_step(&mut result, last_step);
@@ -153,17 +157,32 @@ impl Air for ProcessorAir {
 
     fn get_aux_assertions<E: FieldElement<BaseField = Self::BaseField>>(
         &self,
-        _aux_rand_elements: &winter_air::AuxTraceRandElements<E>,
+        aux_rand_elements: &winter_air::AuxTraceRandElements<E>,
     ) -> Vec<Assertion<E>> {
         let mut result: Vec<Assertion<E>> = Vec::new();
 
         // --- set assertions for the first step --------------------------------------------------
+
+        // add initial assertions for the stack's auxiliary columns.
+        stack::get_aux_assertions_first_step(
+            &mut result,
+            aux_rand_elements,
+            self.stack_inputs.values(),
+        );
 
         // Add initial assertions for the range checker's auxiliary columns.
         range::get_aux_assertions_first_step(&mut result);
 
         // --- set assertions for the last step ---------------------------------------------------
         let last_step = self.last_step();
+
+        // add the stack's auxiliary column assertions for the last step.
+        stack::get_aux_assertions_last_step(
+            &mut result,
+            aux_rand_elements,
+            &self.stack_outputs,
+            last_step,
+        );
 
         // Add the range checker's auxiliary column assertions for the last step.
         range::get_aux_assertions_last_step(&mut result, last_step);
@@ -186,6 +205,12 @@ impl Air for ProcessorAir {
         // --- system -----------------------------------------------------------------------------
         // clk' = clk + 1
         result[0] = next[CLK_COL_IDX] - (current[CLK_COL_IDX] + E::ONE);
+
+        // --- stack operations -------------------------------------------------------------------
+        stack::enforce_constraints::<E>(
+            frame,
+            select_result_range!(result, self.constraint_ranges.stack),
+        );
 
         // --- range checker ----------------------------------------------------------------------
         range::enforce_constraints::<E>(
@@ -226,24 +251,19 @@ impl Air for ProcessorAir {
 
 #[derive(Debug)]
 pub struct PublicInputs {
-    program_hash: Digest,
-    stack_inputs: Vec<Felt>,
-    stack_outputs: Vec<Felt>,
+    program_info: ProgramInfo,
+    stack_inputs: StackInputs,
+    stack_outputs: StackOutputs,
 }
 
 impl PublicInputs {
-    pub fn new(program_hash: Digest, stack_inputs: Vec<Felt>, stack_outputs: Vec<Felt>) -> Self {
-        assert!(
-            stack_inputs.len() <= MIN_STACK_DEPTH,
-            "too many stack inputs"
-        );
-        assert!(
-            stack_outputs.len() <= MIN_STACK_DEPTH,
-            "too many stack outputs"
-        );
-
+    pub fn new(
+        program_info: ProgramInfo,
+        stack_inputs: StackInputs,
+        stack_outputs: StackOutputs,
+    ) -> Self {
         Self {
-            program_hash,
+            program_info,
             stack_inputs,
             stack_outputs,
         }
@@ -252,8 +272,17 @@ impl PublicInputs {
 
 impl Serializable for PublicInputs {
     fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        target.write(self.program_hash.as_elements());
-        target.write(self.stack_inputs.as_slice());
-        target.write(self.stack_outputs.as_slice());
+        self.program_info.write_into(target);
+        self.stack_inputs.write_into(target);
+        self.stack_outputs.write_into(target);
+    }
+}
+
+impl vm_core::ToElements<Felt> for PublicInputs {
+    fn to_elements(&self) -> Vec<Felt> {
+        let mut result = self.program_info.to_elements();
+        result.append(&mut self.stack_inputs.to_elements());
+        result.append(&mut self.stack_outputs.to_elements());
+        result
     }
 }

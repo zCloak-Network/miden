@@ -1,7 +1,5 @@
-use super::data::{InputFile, OutputFile, ProgramFile};
-use air::StarkField;
-use std::path::PathBuf;
-// use std::time::Instant;
+use super::data::{Debug, InputFile, Libraries, OutputFile, ProgramFile};
+use std::{path::PathBuf, time::Instant};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -19,6 +17,9 @@ pub struct RunCmd {
     /// Path to output file
     #[structopt(short = "o", long = "output", parse(from_os_str))]
     output_file: Option<PathBuf>,
+    /// Paths to .masl library files
+    #[structopt(short = "l", long = "libraries", parse(from_os_str))]
+    library_paths: Vec<PathBuf>,
 }
 
 impl RunCmd {
@@ -27,29 +28,36 @@ impl RunCmd {
         println!("Run program");
         println!("============================================================");
 
+        // load libraries from files
+        let libraries = Libraries::new(&self.library_paths)?;
+
         // load program from file and compile
-        let program = ProgramFile::read(&self.assembly_file)?;
+        let program = ProgramFile::read(&self.assembly_file, &Debug::Off, libraries.libraries)?;
 
         // load input data from file
         let input_data = InputFile::read(&self.input_file, &self.assembly_file)?;
 
-        print!("Executing program... ");
-        // let now = Instant::now();
+        // fetch the stack and program inputs from the arguments
+        let stack_inputs = input_data.parse_stack_inputs()?;
+        let advice_provider = input_data.parse_advice_provider()?;
 
-        // generate execution trace
-        let trace = processor::execute(&program, &input_data.get_program_inputs())
+        let program_hash: [u8; 32] = program.hash().into();
+        print!("Executing program with hash {}... ", hex::encode(program_hash));
+        let now = Instant::now();
+
+        // execute program and generate outputs
+        let trace = processor::execute(&program, stack_inputs, advice_provider)
             .map_err(|err| format!("Failed to generate exection trace = {:?}", err))?;
 
-        // println!("done ({} ms)", now.elapsed().as_millis());
+        println!("done ({} steps in {} ms)", trace.get_trace_len(), now.elapsed().as_millis());
 
-        // extract outputs from execution trace
-        let outputs = trace.last_stack_state()[..self.num_outputs]
-            .iter()
-            .map(|&v| v.as_int())
-            .collect::<Vec<_>>();
-
-        // write outputs to file
-        OutputFile::write(outputs, &self.output_file)?;
+        if let Some(output_path) = &self.output_file {
+            // write outputs to file if one was specified
+            OutputFile::write(trace.stack_outputs(), output_path)?;
+        } else {
+            // write the stack outputs to the screen.
+            println!("Output: {:?}", trace.stack_outputs().stack_truncated(self.num_outputs));
+        }
 
         Ok(())
     }

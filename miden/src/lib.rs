@@ -1,17 +1,17 @@
 #![cfg_attr(not(feature = "std"), no_std)]
+#![doc = include_str!("../README.md")]
 
 // EXPORTS
 // ================================================================================================
 
-pub use air::{FieldExtension, HashFunction, ProofOptions};
-pub use assembly::{Assembler, AssemblyError};
+pub use assembly::{Assembler, AssemblyError, ParsingError};
 pub use processor::{
-    execute, execute_iter, AsmOpInfo, ExecutionError, ExecutionTrace, VmState, VmStateIterator,
+    crypto, execute, execute_iter, utils, AdviceInputs, AdviceProvider, AsmOpInfo, ExecutionError,
+    ExecutionTrace, Kernel, MemAdviceProvider, Operation, ProgramInfo, StackInputs, VmState,
+    VmStateIterator,
 };
-pub use prover::{prove, StarkProof};
+pub use prover::{
+    math, prove, Digest, ExecutionProof, FieldExtension, HashFunction, InputError, Program,
+    ProofOptions, StackOutputs, StarkProof, Word,
+};
 pub use verifier::{verify, VerificationError};
-pub use vm_core::{
-    chiplets::hasher::Digest,
-    errors::{AdviceSetError, InputError},
-    AdviceSet, Program, ProgramInputs,
-};

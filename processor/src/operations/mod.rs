@@ -1,17 +1,26 @@
-use super::{ExecutionError, Felt, FieldElement, Operation, Process, StarkField};
+use super::{AdviceProvider, ExecutionError, Felt, FieldElement, Operation, Process, StarkField};
+use vm_core::stack::STACK_TOP_SIZE;
 
 mod crypto_ops;
+mod ext2_ops;
 mod field_ops;
+mod fri_ops;
 mod io_ops;
 mod stack_ops;
 mod sys_ops;
 mod u32_ops;
 mod utils;
 
+#[cfg(test)]
+use super::Kernel;
+
 // OPERATION DISPATCHER
 // ================================================================================================
 
-impl Process {
+impl<A> Process<A>
+where
+    A: AdviceProvider,
+{
     /// Executes the specified operation.
     pub(super) fn execute_op(&mut self, op: Operation) -> Result<(), ExecutionError> {
         // make sure there is enough memory allocated to hold the execution trace
@@ -23,13 +32,23 @@ impl Process {
             Operation::Noop => self.stack.copy_state(0),
             Operation::Assert => self.op_assert()?,
 
+            Operation::FmpAdd => self.op_fmpadd()?,
+            Operation::FmpUpdate => self.op_fmpupdate()?,
+
+            Operation::SDepth => self.op_sdepth()?,
+            Operation::Caller => self.op_caller()?,
+
+            Operation::Clk => self.op_clk()?,
+
             // ----- flow control operations ------------------------------------------------------
             // control flow operations are never executed directly
             Operation::Join => unreachable!("control flow operation"),
             Operation::Split => unreachable!("control flow operation"),
             Operation::Loop => unreachable!("control flow operation"),
-            Operation::Repeat => unreachable!("control flow operation"),
+            Operation::Call => unreachable!("control flow operation"),
+            Operation::SysCall => unreachable!("control flow operation"),
             Operation::Span => unreachable!("control flow operation"),
+            Operation::Repeat => unreachable!("control flow operation"),
             Operation::Respan => unreachable!("control flow operation"),
             Operation::End => unreachable!("control flow operation"),
             Operation::Halt => unreachable!("control flow operation"),
@@ -48,6 +67,11 @@ impl Process {
             Operation::Eq => self.op_eq()?,
             Operation::Eqz => self.op_eqz()?,
 
+            Operation::Expacc => self.op_expacc()?,
+
+            // ----- ext2 operations --------------------------------------------------------------
+            Operation::Ext2Mul => self.op_ext2mul()?,
+
             // ----- u32 operations ---------------------------------------------------------------
             Operation::U32split => self.op_u32split()?,
             Operation::U32add => self.op_u32add()?,
@@ -58,7 +82,6 @@ impl Process {
             Operation::U32div => self.op_u32div()?,
 
             Operation::U32and => self.op_u32and()?,
-            Operation::U32or => self.op_u32or()?,
             Operation::U32xor => self.op_u32xor()?,
             Operation::U32assert2 => self.op_u32assert2()?,
 
@@ -107,8 +130,8 @@ impl Process {
             // ----- input / output ---------------------------------------------------------------
             Operation::Push(value) => self.op_push(value)?,
 
-            Operation::Read => self.op_read()?,
-            Operation::ReadW => self.op_readw()?,
+            Operation::AdvPop => self.op_advpop()?,
+            Operation::AdvPopW => self.op_advpopw()?,
 
             Operation::MLoadW => self.op_mloadw()?,
             Operation::MStoreW => self.op_mstorew()?,
@@ -116,15 +139,14 @@ impl Process {
             Operation::MLoad => self.op_mload()?,
             Operation::MStore => self.op_mstore()?,
 
-            Operation::FmpAdd => self.op_fmpadd()?,
-            Operation::FmpUpdate => self.op_fmpupdate()?,
-
-            Operation::SDepth => self.op_sdepth()?,
+            Operation::MStream => self.op_mstream()?,
+            Operation::Pipe => self.op_pipe()?,
 
             // ----- cryptographic operations -----------------------------------------------------
-            Operation::RpPerm => self.op_rpperm()?,
+            Operation::HPerm => self.op_hperm()?,
             Operation::MpVerify => self.op_mpverify()?,
-            Operation::MrUpdate(copy) => self.op_mrupdate(copy)?,
+            Operation::MrUpdate => self.op_mrupdate()?,
+            Operation::FriE2F4 => self.op_fri_ext2fold4()?,
         }
 
         self.advance_clock();
@@ -137,7 +159,7 @@ impl Process {
         self.system.advance_clock();
         self.stack.advance_clock();
         self.chiplets.advance_clock();
-        self.advice.advance_clock();
+        self.advice_provider.advance_clock();
     }
 
     /// Makes sure there is enough memory allocated for the trace to accommodate a new clock cycle.
@@ -145,50 +167,66 @@ impl Process {
         self.system.ensure_trace_capacity();
         self.stack.ensure_trace_capacity();
     }
+}
 
+#[cfg(test)]
+impl Process<super::MemAdviceProvider> {
     // TEST METHODS
     // --------------------------------------------------------------------------------------------
 
-    /// Instantiates a new blank process for testing purposes.
-    #[cfg(test)]
-    fn new_dummy() -> Self {
-        Self::new(super::ProgramInputs::none())
+    /// Instantiates a new blank process for testing purposes. The stack in the process is
+    /// initialized with the provided values.
+    fn new_dummy(stack_inputs: super::StackInputs) -> Self {
+        let advice_provider = super::MemAdviceProvider::default();
+        let mut process = Self::new(Kernel::default(), stack_inputs, advice_provider);
+        process.execute_op(Operation::Noop).unwrap();
+        process
     }
 
-    /// Instantiates a new process with an advice tape for testing purposes.
-    #[cfg(test)]
-    fn new_dummy_with_advice_tape(advice_tape: &[u64]) -> Self {
-        let inputs = super::ProgramInputs::new(&[], advice_tape, vec![]).unwrap();
-        Self::new(inputs)
+    /// Instantiates a new blank process for testing purposes.
+    fn new_dummy_with_empty_stack() -> Self {
+        let stack = super::StackInputs::default();
+        Self::new_dummy(stack)
+    }
+
+    /// Instantiates a new process with an advice stack for testing purposes.
+    fn new_dummy_with_advice_stack(advice_stack: &[u64]) -> Self {
+        let stack_inputs = super::StackInputs::default();
+        let advice_inputs = super::AdviceInputs::default()
+            .with_stack_values(advice_stack.iter().copied())
+            .unwrap();
+        let advice_provider = super::MemAdviceProvider::from(advice_inputs);
+        let mut process = Self::new(Kernel::default(), stack_inputs, advice_provider);
+        process.execute_op(Operation::Noop).unwrap();
+        process
     }
 
     /// Instantiates a new blank process with one decoder trace row for testing purposes. This
     /// allows for setting helpers in the decoder when executing operations during tests.
-    #[cfg(test)]
-    fn new_dummy_with_decoder_helpers() -> Self {
-        Self::new_dummy_with_inputs_and_decoder_helpers(super::ProgramInputs::none())
+    fn new_dummy_with_decoder_helpers_and_empty_stack() -> Self {
+        let stack_inputs = super::StackInputs::default();
+        Self::new_dummy_with_decoder_helpers(stack_inputs)
+    }
+
+    /// Instantiates a new blank process with one decoder trace row for testing purposes. This
+    /// allows for setting helpers in the decoder when executing operations during tests.
+    ///
+    /// The stack in the process is initialized with the provided values.
+    fn new_dummy_with_decoder_helpers(stack_inputs: super::StackInputs) -> Self {
+        let advice_inputs = super::AdviceInputs::default();
+        Self::new_dummy_with_inputs_and_decoder_helpers(stack_inputs, advice_inputs)
     }
 
     /// Instantiates a new process having Program inputs along with one decoder trace row
     /// for testing purposes.
-    #[cfg(test)]
-    fn new_dummy_with_inputs_and_decoder_helpers(input: super::ProgramInputs) -> Self {
-        let mut process = Self::new(input);
+    fn new_dummy_with_inputs_and_decoder_helpers(
+        stack_inputs: super::StackInputs,
+        advice_inputs: super::AdviceInputs,
+    ) -> Self {
+        let advice_provider = super::MemAdviceProvider::from(advice_inputs);
+        let mut process = Self::new(Kernel::default(), stack_inputs, advice_provider);
         process.decoder.add_dummy_trace_row();
+        process.execute_op(Operation::Noop).unwrap();
         process
-    }
-}
-
-// TEST HELPERS
-// ================================================================================================
-
-/// Pushes proved values onto the stack of the specified process. The values are pushed in the
-/// order in which they are provided.
-#[cfg(test)]
-fn init_stack_with(process: &mut Process, values: &[u64]) {
-    let mut result = Vec::with_capacity(values.len());
-    for value in values.iter().map(|&v| Felt::new(v)) {
-        process.execute_op(Operation::Push(value)).unwrap();
-        result.push(value);
     }
 }

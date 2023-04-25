@@ -1,375 +1,428 @@
-use super::{AssemblyContext, AssemblyError, CodeBlock, Token, TokenStream};
-pub use blocks::{combine_blocks, parse_code_blocks};
-use u32_ops::U32OpMode;
-use vm_core::{
-    utils::{
-        collections::Vec,
-        string::{String, ToString},
-    },
-    AssemblyOp, Decorator, DecoratorList, Felt, FieldElement, Operation, StarkField,
+use super::{
+    AbsolutePath, BTreeMap, ByteReader, ByteWriter, Deserializable, Felt, LabelError, ParsingError,
+    ProcedureId, ProcedureName, Serializable, SerializationError, StarkField, String, ToString,
+    Token, TokenStream, Vec, MAX_LABEL_LEN,
 };
+use core::{fmt::Display, ops::RangeBounds};
 
-mod blocks;
-mod crypto_ops;
+mod nodes;
+use crate::utils::bound_into_included_u64;
+pub(crate) use nodes::{Instruction, Node};
+mod context;
+use context::ParserContext;
+mod labels;
+use labels::CONSTANT_LABEL_PARSER;
+pub use labels::PROCEDURE_LABEL_PARSER;
+
+mod adv_ops;
 mod field_ops;
 mod io_ops;
+mod serde;
 mod stack_ops;
 mod u32_ops;
 
-// OP PARSER
+#[cfg(test)]
+pub mod tests;
+
+// TYPE ALIASES
+// ================================================================================================
+type LocalProcMap = BTreeMap<String, (u16, ProcedureAst)>;
+type LocalConstMap = BTreeMap<String, u64>;
+
+// ABSTRACT SYNTAX TREE STRUCTS
 // ================================================================================================
 
-/// Transforms an assembly instruction into a sequence of one or more VM instructions.
-fn parse_op_token(
-    op: &Token,
-    span_ops: &mut Vec<Operation>,
-    num_proc_locals: u32,
-    decorators: &mut DecoratorList,
-    in_debug_mode: bool,
-) -> Result<(), AssemblyError> {
-    let dec_len = decorators.len();
-    // if assembler is in debug mode, populate decorators list with debug related
-    // decorators like AsmOp.
-    if in_debug_mode {
-        decorators.push((
-            span_ops.len(),
-            Decorator::AsmOp(AssemblyOp::new(op.to_string(), 1)),
-        ));
+/// An abstract syntax tree (AST) of a Miden program.
+///
+/// A program AST consists of a list of internal procedure ASTs and a list of body nodes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgramAst {
+    pub local_procs: Vec<ProcedureAst>,
+    pub body: Vec<Node>,
+}
+
+impl ProgramAst {
+    /// Returns byte representation of the `ProgramAst`.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        let mut byte_writer = ByteWriter::default();
+
+        // local procedures
+        byte_writer.write_u16(self.local_procs.len() as u16);
+
+        self.local_procs.iter().try_for_each(|proc| proc.write_into(&mut byte_writer))?;
+
+        // body
+        self.body.write_into(&mut byte_writer)?;
+
+        Ok(byte_writer.into_bytes())
     }
 
-    // based on the instruction, invoke the correct parser for the operation
-    match op.parts()[0] {
-        // ----- field operations -----------------------------------------------------------------
-        "assert" => field_ops::parse_assert(span_ops, op),
-        "assert_eq" => field_ops::parse_assert_eq(span_ops, op),
+    /// Returns a `ProgramAst` struct by its byte representation.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
+        let mut byte_reader = ByteReader::new(bytes);
 
-        "add" => field_ops::parse_add(span_ops, op),
-        "sub" => field_ops::parse_sub(span_ops, op),
-        "mul" => field_ops::parse_mul(span_ops, op),
-        "div" => field_ops::parse_div(span_ops, op),
-        "neg" => field_ops::parse_neg(span_ops, op),
-        "inv" => field_ops::parse_inv(span_ops, op),
+        let num_local_procs = byte_reader.read_u16()?;
 
-        "checked_pow2" => field_ops::parse_pow2(span_ops, op, true),
-        "unchecked_pow2" => field_ops::parse_pow2(span_ops, op, false),
+        let local_procs = (0..num_local_procs)
+            .map(|_| ProcedureAst::read_from(&mut byte_reader))
+            .collect::<Result<_, _>>()?;
 
-        "not" => field_ops::parse_not(span_ops, op),
-        "and" => field_ops::parse_and(span_ops, op),
-        "or" => field_ops::parse_or(span_ops, op),
-        "xor" => field_ops::parse_xor(span_ops, op),
+        let body = Deserializable::read_from(&mut byte_reader)?;
 
-        "eq" => field_ops::parse_eq(span_ops, op),
-        "neq" => field_ops::parse_neq(span_ops, op),
-        "lt" => field_ops::parse_lt(span_ops, op),
-        "lte" => field_ops::parse_lte(span_ops, op),
-        "gt" => field_ops::parse_gt(span_ops, op),
-        "gte" => field_ops::parse_gte(span_ops, op),
-        "eqw" => field_ops::parse_eqw(span_ops, op),
+        Ok(ProgramAst { local_procs, body })
+    }
+}
 
-        // ----- u32 operations -------------------------------------------------------------------
-        "u32test" => u32_ops::parse_u32test(span_ops, op),
-        "u32testw" => u32_ops::parse_u32testw(span_ops, op),
-        "u32assert" => u32_ops::parse_u32assert(span_ops, op),
-        "u32assertw" => u32_ops::parse_u32assertw(span_ops, op),
-        "u32cast" => u32_ops::parse_u32cast(span_ops, op),
-        "u32split" => u32_ops::parse_u32split(span_ops, op),
+/// An abstract syntax tree (AST) of a Miden code module.
+///
+/// A module AST consists of a list of procedure ASTs and module documentation. Procedures in the
+/// list could be local or exported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModuleAst {
+    pub docs: Option<String>,
+    pub local_procs: Vec<ProcedureAst>,
+}
 
-        "u32checked_add" => u32_ops::parse_u32add(span_ops, op, U32OpMode::Checked),
-        "u32wrapping_add" => u32_ops::parse_u32add(span_ops, op, U32OpMode::Wrapping),
-        "u32overflowing_add" => u32_ops::parse_u32add(span_ops, op, U32OpMode::Overflowing),
+impl ModuleAst {
+    /// Returns byte representation of the `ModuleAst`.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
+        let mut byte_writer = ByteWriter::default();
 
-        "u32overflowing_add3" => u32_ops::parse_u32add3(span_ops, op, U32OpMode::Overflowing),
+        // docs
+        self.docs.write_into(&mut byte_writer)?;
 
-        "u32checked_sub" => u32_ops::parse_u32sub(span_ops, op, U32OpMode::Checked),
-        "u32wrapping_sub" => u32_ops::parse_u32sub(span_ops, op, U32OpMode::Wrapping),
-        "u32overflowing_sub" => u32_ops::parse_u32sub(span_ops, op, U32OpMode::Overflowing),
+        // local procedures
+        self.local_procs.write_into(&mut byte_writer)?;
 
-        "u32checked_mul" => u32_ops::parse_u32mul(span_ops, op, U32OpMode::Checked),
-        "u32wrapping_mul" => u32_ops::parse_u32mul(span_ops, op, U32OpMode::Wrapping),
-        "u32overflowing_mul" => u32_ops::parse_u32mul(span_ops, op, U32OpMode::Overflowing),
+        Ok(byte_writer.into_bytes())
+    }
 
-        "u32overflowing_madd" => u32_ops::parse_u32madd(span_ops, op, U32OpMode::Overflowing),
+    /// Returns a `ModuleAst` struct by its byte representation.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, SerializationError> {
+        let mut byte_reader = ByteReader::new(bytes);
 
-        "u32checked_div" => u32_ops::parse_u32div(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_div" => u32_ops::parse_u32div(span_ops, op, U32OpMode::Unchecked),
+        // docs
+        let docs = Deserializable::read_from(&mut byte_reader)?;
 
-        "u32checked_mod" => u32_ops::parse_u32mod(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_mod" => u32_ops::parse_u32mod(span_ops, op, U32OpMode::Unchecked),
+        // local procedures
+        let local_procs = Deserializable::read_from(&mut byte_reader)?;
 
-        "u32checked_divmod" => u32_ops::parse_u32divmod(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_divmod" => u32_ops::parse_u32divmod(span_ops, op, U32OpMode::Unchecked),
+        Ok(ModuleAst { docs, local_procs })
+    }
+}
 
-        "u32checked_and" => u32_ops::parse_u32and(span_ops, op),
-        "u32checked_or" => u32_ops::parse_u32or(span_ops, op),
-        "u32checked_xor" => u32_ops::parse_u32xor(span_ops, op),
-        "u32checked_not" => u32_ops::parse_u32not(span_ops, op),
+impl Serializable for ModuleAst {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        self.docs.write_into(target)?;
+        self.local_procs.write_into(target)?;
+        Ok(())
+    }
+}
 
-        "u32checked_shr" => u32_ops::parse_u32shr(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_shr" => u32_ops::parse_u32shr(span_ops, op, U32OpMode::Unchecked),
+impl Deserializable for ModuleAst {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let docs = Deserializable::read_from(bytes)?;
+        let local_procs = Deserializable::read_from(bytes)?;
+        Ok(Self { docs, local_procs })
+    }
+}
 
-        "u32checked_shl" => u32_ops::parse_u32shl(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_shl" => u32_ops::parse_u32shl(span_ops, op, U32OpMode::Unchecked),
+/// An abstract syntax tree of a Miden procedure.
+///
+/// A procedure AST consists of a list of body nodes and additional metadata about the procedure
+/// (e.g., procedure name, number of memory locals used by the procedure, and whether a procedure
+/// is exported or internal).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcedureAst {
+    pub name: ProcedureName,
+    pub docs: Option<String>,
+    pub num_locals: u16,
+    pub body: Vec<Node>,
+    pub is_export: bool,
+}
 
-        "u32checked_rotr" => u32_ops::parse_u32rotr(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_rotr" => u32_ops::parse_u32rotr(span_ops, op, U32OpMode::Unchecked),
+impl Serializable for ProcedureAst {
+    /// Writes byte representation of the `ProcedureAst` into the provided `ByteWriter` struct.
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        self.name.write_into(target)?;
+        self.docs.write_into(target)?;
+        target.write_bool(self.is_export);
+        target.write_u16(self.num_locals);
+        self.body.write_into(target)?;
+        Ok(())
+    }
+}
 
-        "u32checked_rotl" => u32_ops::parse_u32rotl(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_rotl" => u32_ops::parse_u32rotl(span_ops, op, U32OpMode::Unchecked),
+impl Deserializable for ProcedureAst {
+    /// Returns a `ProcedureAst` from its byte representation stored in provided `ByteReader` struct.
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let name = ProcedureName::read_from(bytes)?;
+        let docs = Deserializable::read_from(bytes)?;
+        let is_export = bytes.read_bool()?;
+        let num_locals = bytes.read_u16()?;
+        let body = Deserializable::read_from(bytes)?;
+        Ok(ProcedureAst {
+            name,
+            docs,
+            num_locals,
+            body,
+            is_export,
+        })
+    }
+}
 
-        "u32checked_eq" => u32_ops::parse_u32eq(span_ops, op),
-        "u32checked_neq" => u32_ops::parse_u32neq(span_ops, op),
+// PARSERS
+// ================================================================================================
 
-        "u32checked_lt" => u32_ops::parse_u32lt(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_lt" => u32_ops::parse_u32lt(span_ops, op, U32OpMode::Unchecked),
+/// Parses the provided source into a program AST. A program consist of a body and a set of
+/// internal (i.e., not exported) procedures.
+pub fn parse_program(source: &str) -> Result<ProgramAst, ParsingError> {
+    let mut tokens = TokenStream::new(source)?;
+    let imports = parse_imports(&mut tokens)?;
+    let local_constants = parse_constants(&mut tokens)?;
 
-        "u32checked_lte" => u32_ops::parse_u32lte(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_lte" => u32_ops::parse_u32lte(span_ops, op, U32OpMode::Unchecked),
+    let mut context = ParserContext {
+        imports,
+        local_constants,
+        ..Default::default()
+    };
 
-        "u32checked_gt" => u32_ops::parse_u32gt(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_gt" => u32_ops::parse_u32gt(span_ops, op, U32OpMode::Unchecked),
+    context.parse_procedures(&mut tokens, false)?;
 
-        "u32checked_gte" => u32_ops::parse_u32gte(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_gte" => u32_ops::parse_u32gte(span_ops, op, U32OpMode::Unchecked),
+    // make sure program body is present
+    let next_token = tokens.read().ok_or_else(|| ParsingError::unexpected_eof(tokens.pos()))?;
+    if next_token.parts()[0] != Token::BEGIN {
+        return Err(ParsingError::unexpected_token(next_token, Token::BEGIN));
+    }
 
-        "u32checked_min" => u32_ops::parse_u32min(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_min" => u32_ops::parse_u32min(span_ops, op, U32OpMode::Unchecked),
+    let program_start = tokens.pos();
+    // consume the 'begin' token
+    let header = tokens.read().expect("missing program header");
+    header.validate_begin()?;
+    tokens.advance();
 
-        "u32checked_max" => u32_ops::parse_u32max(span_ops, op, U32OpMode::Checked),
-        "u32unchecked_max" => u32_ops::parse_u32max(span_ops, op, U32OpMode::Unchecked),
+    // make sure there is something to be read
+    let start_pos = tokens.pos();
+    if tokens.eof() {
+        return Err(ParsingError::unexpected_eof(start_pos));
+    }
 
-        // ----- stack manipulation ---------------------------------------------------------------
-        "drop" => stack_ops::parse_drop(span_ops, op),
-        "dropw" => stack_ops::parse_dropw(span_ops, op),
-        "padw" => stack_ops::parse_padw(span_ops, op),
-        "dup" => stack_ops::parse_dup(span_ops, op),
-        "dupw" => stack_ops::parse_dupw(span_ops, op),
-        "swap" => stack_ops::parse_swap(span_ops, op),
-        "swapw" => stack_ops::parse_swapw(span_ops, op),
-        "swapdw" => stack_ops::parse_swapdw(span_ops, op),
-        "movup" => stack_ops::parse_movup(span_ops, op),
-        "movupw" => stack_ops::parse_movupw(span_ops, op),
-        "movdn" => stack_ops::parse_movdn(span_ops, op),
-        "movdnw" => stack_ops::parse_movdnw(span_ops, op),
+    let mut body = Vec::<Node>::new();
 
-        "cswap" => stack_ops::parse_cswap(span_ops, op),
-        "cswapw" => stack_ops::parse_cswapw(span_ops, op),
-        "cdrop" => stack_ops::parse_cdrop(span_ops, op),
-        "cdropw" => stack_ops::parse_cdropw(span_ops, op),
+    // parse the sequence of nodes and add each node to the list
+    let mut end_of_nodes = false;
+    while !end_of_nodes {
+        let node_count = body.len();
+        context.parse_body(&mut tokens, &mut body, false)?;
+        end_of_nodes = body.len() == node_count;
+    }
 
-        // ----- input / output operations --------------------------------------------------------
-        "push" => io_ops::parse_push(span_ops, op, num_proc_locals),
-        "pushw" => io_ops::parse_pushw(span_ops, op, num_proc_locals),
-        "pop" => io_ops::parse_pop(span_ops, op, num_proc_locals),
-        "popw" => io_ops::parse_popw(span_ops, op, num_proc_locals),
-        "loadw" => io_ops::parse_loadw(span_ops, op, num_proc_locals),
-        "storew" => io_ops::parse_storew(span_ops, op, num_proc_locals),
-        "adv" => io_ops::parse_adv_inject(span_ops, op, decorators),
-
-        // ----- cryptographic operations ---------------------------------------------------------
-        "rphash" => crypto_ops::parse_rphash(span_ops, op),
-        "rpperm" => crypto_ops::parse_rpperm(span_ops, op),
-
-        "mtree_get" => crypto_ops::parse_mtree_get(span_ops, op, decorators),
-        "mtree_set" => crypto_ops::parse_mtree_set(span_ops, op, decorators),
-        "mtree_cwm" => crypto_ops::parse_mtree_cwm(span_ops, op, decorators),
-
-        // ----- catch all ------------------------------------------------------------------------
-        _ => return Err(AssemblyError::invalid_op(op)),
+    // consume the 'end' token
+    match tokens.read() {
+        None => Err(ParsingError::unmatched_begin(
+            tokens.read_at(program_start).expect("no begin token"),
+        )),
+        Some(token) => match token.parts()[0] {
+            Token::END => token.validate_end(),
+            Token::ELSE => Err(ParsingError::dangling_else(token)),
+            _ => Err(ParsingError::unmatched_begin(
+                tokens.read_at(program_start).expect("no begin token"),
+            )),
+        },
     }?;
+    tokens.advance();
 
-    if in_debug_mode {
-        let op_start = decorators[dec_len].0;
-        // edit the number of cycles corresponding to the asmop decorator at an index
-        if let Decorator::AsmOp(assembly_op) = &mut decorators[dec_len].1 {
-            assembly_op.set_num_cycles((span_ops.len() - op_start) as u8)
+    // make sure there are no instructions after the end
+    if let Some(token) = tokens.read() {
+        return Err(ParsingError::dangling_ops_after_program(token));
+    }
+
+    let local_procs = sort_procs_into_vec(context.local_procs);
+
+    let program = ProgramAst { body, local_procs };
+
+    Ok(program)
+}
+
+/// Parses the provided source into a module ST. A module consists of internal and exported
+/// procedures but does not contain a body.
+pub fn parse_module(source: &str) -> Result<ModuleAst, ParsingError> {
+    let mut tokens = TokenStream::new(source)?;
+
+    let imports = parse_imports(&mut tokens)?;
+    let local_constants = parse_constants(&mut tokens)?;
+    let mut context = ParserContext {
+        imports,
+        local_constants,
+        ..Default::default()
+    };
+    context.parse_procedures(&mut tokens, true)?;
+
+    // make sure program body is absent and there are no more instructions.
+    if let Some(token) = tokens.read() {
+        if token.parts()[0] == Token::BEGIN {
+            return Err(ParsingError::not_a_library_module(token));
+        } else {
+            return Err(ParsingError::dangling_ops_after_module(token));
         }
     }
 
-    Ok(())
+    let module = ModuleAst {
+        docs: tokens.take_module_comments(),
+        local_procs: sort_procs_into_vec(context.local_procs),
+    };
+
+    Ok(module)
+}
+
+/// Parses all `use` statements into a map of imports which maps a module name (e.g., "u64") to
+/// its fully-qualified path (e.g., "std::math::u64").
+fn parse_imports(tokens: &mut TokenStream) -> Result<BTreeMap<String, AbsolutePath>, ParsingError> {
+    let mut imports = BTreeMap::<String, AbsolutePath>::new();
+    // read tokens from the token stream until all `use` tokens are consumed
+    while let Some(token) = tokens.read() {
+        match token.parts()[0] {
+            Token::USE => {
+                let module_path = token.parse_use()?;
+                let module_name = module_path.label();
+                if imports.contains_key(module_name) {
+                    return Err(ParsingError::duplicate_module_import(token, &module_path));
+                }
+
+                imports.insert(module_name.to_string(), module_path);
+
+                // consume the `use` token
+                tokens.advance();
+            }
+            _ => break,
+        }
+    }
+
+    Ok(imports)
+}
+
+/// Parses all `const` statements into a map which maps a const name to a value
+fn parse_constants(tokens: &mut TokenStream) -> Result<LocalConstMap, ParsingError> {
+    // instantiate new constant map for this module
+    let mut constants = LocalConstMap::new();
+
+    // iterate over tokens until we find a const declaration
+    while let Some(token) = tokens.read() {
+        match token.parts()[0] {
+            Token::CONST => {
+                let (name, value) = parse_constant(token)?;
+
+                if constants.contains_key(&name) {
+                    return Err(ParsingError::duplicate_const_name(token, &name));
+                }
+
+                constants.insert(name, value);
+                tokens.advance();
+            }
+            _ => break,
+        }
+    }
+
+    Ok(constants)
 }
 
 // HELPER FUNCTIONS
 // ================================================================================================
 
-/// Parses a single parameter into a valid field element.
-fn parse_element_param(op: &Token, param_idx: usize) -> Result<Felt, AssemblyError> {
-    // make sure that the parameter value is available
-    if op.num_parts() <= param_idx {
-        return Err(AssemblyError::missing_param(op));
-    }
+/// Sort a map of procedures into a vec, respecting the order set in the map
+fn sort_procs_into_vec(proc_map: LocalProcMap) -> Vec<ProcedureAst> {
+    let mut procedures: Vec<_> = proc_map.into_values().collect();
+    procedures.sort_by_key(|(idx, _proc)| *idx);
+
+    procedures.into_iter().map(|(_idx, proc)| proc).collect()
+}
+
+/// Parses a param from the op token with the specified type.
+fn parse_param<I: core::str::FromStr>(op: &Token, param_idx: usize) -> Result<I, ParsingError> {
     let param_value = op.parts()[param_idx];
 
-    if let Some(param_value) = param_value.strip_prefix("0x") {
-        // parse hexadecimal number
-        parse_hex_param(op, param_idx, param_value)
-    } else {
-        // parse decimal number
-        parse_decimal_param(op, param_idx, param_value)
-    }
-}
-
-/// Parses a decimal parameter value into valid a field element.
-fn parse_decimal_param(
-    op: &Token,
-    param_idx: usize,
-    param_str: &str,
-) -> Result<Felt, AssemblyError> {
-    match param_str.parse::<u64>() {
-        Ok(value) => get_valid_felt(op, param_idx, value),
-        Err(_) => Err(AssemblyError::invalid_param(op, param_idx)),
-    }
-}
-
-/// Parses a hexadecimal parameter value into a valid field element.
-fn parse_hex_param(op: &Token, param_idx: usize, param_str: &str) -> Result<Felt, AssemblyError> {
-    match u64::from_str_radix(param_str, 16) {
-        Ok(value) => get_valid_felt(op, param_idx, value),
-        Err(_) => Err(AssemblyError::invalid_param(op, param_idx)),
-    }
-}
-
-/// Checks that the u64 parameter value is a valid field element value and returns it as a field
-/// element.
-fn get_valid_felt(op: &Token, param_idx: usize, param: u64) -> Result<Felt, AssemblyError> {
-    if param >= Felt::MODULUS {
-        return Err(AssemblyError::invalid_param_with_reason(
-            op,
-            param_idx,
-            format!("parameter value must be smaller than {}", Felt::MODULUS).as_str(),
-        ));
-    }
-
-    Ok(Felt::new(param))
-}
-
-/// This is a helper function that parses the parameter at the specified op index as an integer and
-/// ensures that it falls within the bounds specified by the caller.
-///
-/// # Errors
-/// Returns an invalid param AssemblyError if:
-/// - the parsing attempt fails.
-/// - the parameter is outside the specified lower and upper bounds.
-fn parse_u32_param(
-    op: &Token,
-    param_idx: usize,
-    lower_bound: u32,
-    upper_bound: u32,
-) -> Result<u32, AssemblyError> {
-    let param_value = op.parts()[param_idx];
-
-    // attempt to parse the parameter value as an integer
-    let result = match param_value.parse::<u32>() {
+    let result = match param_value.parse::<I>() {
         Ok(i) => i,
-        Err(_) => return Err(AssemblyError::invalid_param(op, param_idx)),
+        Err(_) => return Err(ParsingError::invalid_param(op, param_idx)),
     };
-
-    // check that the parameter is within the specified bounds
-    if result < lower_bound || result > upper_bound {
-        return Err(AssemblyError::invalid_param_with_reason(
-            op,
-            param_idx,
-            format!(
-                "parameter value must be greater than or equal to {} and less than or equal to {}",
-                lower_bound, upper_bound
-            )
-            .as_str(),
-        ));
-    }
 
     Ok(result)
 }
 
-/// This is a helper function that appends a PUSH operation to the span block which puts the
-/// provided value parameter onto the stack.
-///
-/// When the value is 0, PUSH operation is replaced with PAD. When the value is 1, PUSH operation
-/// is replaced with PAD INCR because in most cases this will be more efficient than doing a PUSH.
-fn push_value(span_ops: &mut Vec<Operation>, value: Felt) {
-    if value == Felt::ZERO {
-        span_ops.push(Operation::Pad);
-    } else if value == Felt::ONE {
-        span_ops.push(Operation::Pad);
-        span_ops.push(Operation::Incr);
-    } else {
-        span_ops.push(Operation::Push(value));
+/// parses a constant token and returns a (constant_name, constant_value) tuple
+pub fn parse_constant(token: &Token) -> Result<(String, u64), ParsingError> {
+    match token.num_parts() {
+        0 => unreachable!(),
+        1 => Err(ParsingError::missing_param(token)),
+        2 => {
+            let const_declaration: Vec<&str> = token.parts()[1].split('=').collect();
+            match const_declaration.len() {
+                0 => unreachable!(),
+                1 => Err(ParsingError::missing_param(token)),
+                2 => {
+                    let name = CONSTANT_LABEL_PARSER
+                        .parse_label(const_declaration[0].to_string())
+                        .map_err(|err| ParsingError::invalid_const_name(token, err))?;
+                    let value = parse_const_value(token, const_declaration[1])?;
+                    Ok((name, value))
+                }
+                _ => Err(ParsingError::extra_param(token)),
+            }
+        }
+        _ => Err(ParsingError::extra_param(token)),
     }
 }
 
-/// Validates an op Token against a provided instruction string and/or an expected number of
-/// parameter inputs and returns an appropriate AssemblyError if the operation Token is invalid.
+/// Parses a constant value and ensures it falls within bounds specified by the caller
+fn parse_const_value(op: &Token, const_value: &str) -> Result<u64, ParsingError> {
+    let result = const_value
+        .parse::<u64>()
+        .map_err(|err| ParsingError::invalid_const_value(op, const_value, &err.to_string()))?;
+
+    let range = 0..Felt::MODULUS;
+    range.contains(&result).then_some(result).ok_or_else(|| ParsingError::invalid_const_value(op, const_value, format!(
+        "constant value must be greater than or equal to {lower_bound} and less than or equal to {upper_bound}", lower_bound = bound_into_included_u64(range.start_bound(), true),
+        upper_bound = bound_into_included_u64(range.end_bound(), false)
+    )
+    .as_str(),))
+}
+
+/// Parses a param from the op token with the specified type and ensures that it falls within the
+/// bounds specified by the caller.
+fn parse_checked_param<I, R>(op: &Token, param_idx: usize, range: R) -> Result<I, ParsingError>
+where
+    I: core::str::FromStr + Ord + Clone + Into<u64> + Display,
+    R: RangeBounds<I>,
+{
+    let param_value = op.parts()[param_idx];
+
+    let result = match param_value.parse::<I>() {
+        Ok(i) => i,
+        Err(_) => return Err(ParsingError::invalid_param(op, param_idx)),
+    };
+
+    // check that the parameter is within the specified bounds
+    range.contains(&result).then_some(result).ok_or_else(||
+        ParsingError::invalid_param_with_reason(
+            op,
+            param_idx,
+            format!(
+                "parameter value must be greater than or equal to {lower_bound} and less than or equal to {upper_bound}", lower_bound = bound_into_included_u64(range.start_bound(), true),
+                upper_bound = bound_into_included_u64(range.end_bound(), false)
+            )
+            .as_str(),
+        )
+    )
+}
+
+/// Returns an error if the passed in value is 0.
 ///
-/// * To fully validate an operation, pass all of the following:
-/// - the parsed operation Token
-/// - a string describing a valid instruction, with variants separated by '|' and parameters
-///   excluded.
-/// - an integer or range for the number of allowed parameters
-/// This will attempt to fully validate the operation, so a full-length instruction must be
-/// described. For example, `popw.mem` accepts 0 or 1 inputs and can be validated by:
-/// ```validate_operation!(op_token, "popw.mem", 0..1)```
-///
-/// * To validate only the operation parameters, specify @only_params before passing the same inputs
-/// used for full validation (above). This will skip validating each part of the instruction.
-/// For example, to validate only the parameters of `popw.mem` use:
-/// ```validate_operation!(@only_params op_token, "popw.mem", 0..1)```
-///
-/// * To validate only the instruction portion of the operation, exclude the specification for the
-/// number of parameters. This will only validate up to the number of parts in the provided
-/// instruction string. For example, `pop.local` and `pop.mem` are the two valid instruction
-/// variants for `pop`, so the first 2 parts of `pop` can be validated by:
-/// ```validate_operation!(op_token, "pop.local|mem")```
-/// or the first part can be validated by:
-/// ```validate_operation!(op_token, "pop")```
-#[macro_export]
-macro_rules! validate_operation {
-    // validate that the number of parameters is within the allowed range
-    (@only_params $token:expr, $instr:literal, $min_params:literal..$max_params:expr ) => {
-        let num_parts = $token.num_parts();
-        let num_instr_parts = $instr.split(".").count();
-
-        // token has too few parts to contain the required parameters
-        if num_parts < num_instr_parts + $min_params {
-            return Err(AssemblyError::missing_param($token));
-        }
-        // token has more than the maximum number of parts
-        if num_parts > num_instr_parts + $max_params {
-            return Err(AssemblyError::extra_param($token));
-        }
-    };
-    // validate the exact number of parameters
-    (@only_params $token:expr, $instr:literal, $num_params:literal) => {
-        validate_operation!(@only_params $token, $instr, $num_params..$num_params);
-    };
-
-    // validate the instruction string and an optional parameter range
-    ($token:expr, $instr:literal $(, $min_params:literal..$max_params:expr)?) => {
-        // split the expected instruction into a vector of parts
-        let instr_parts: Vec<Vec<&str>> = $instr
-            .split(".")
-            .map(|part| part.split("|").collect())
-            .collect();
-
-        let num_parts = $token.num_parts();
-        let num_instr_parts = instr_parts.len();
-
-        // token has too few parts to contain the full instruction
-        if num_parts < num_instr_parts {
-            return Err(AssemblyError::invalid_op($token));
-        }
-
-        // compare the parts to make sure they match
-        for (part_variants, token_part) in instr_parts.iter().zip($token.parts()) {
-            if !part_variants.contains(token_part) {
-                return Err(AssemblyError::unexpected_token($token, $instr));
-            }
-        }
-
-        $(
-            // validate the parameter range, if provided
-            validate_operation!(@only_params $token, $instr, $min_params..$max_params);
-        )?
-    };
-    // validate the instruction string and an exact number of parameters
-    ($token:expr, $instr:literal, $num_params:literal) => {
-        validate_operation!($token, $instr, $num_params..$num_params);
-    };
+/// This is intended to be used when parsing instructions which need to perform division by
+/// immediate value.
+fn check_div_by_zero(value: u64, op: &Token, param_idx: usize) -> Result<(), ParsingError> {
+    if value == 0 {
+        Err(ParsingError::invalid_param_with_reason(op, param_idx, "division by zero"))
+    } else {
+        Ok(())
+    }
 }

@@ -1,32 +1,60 @@
 use super::{
-    combine_blocks, parse_code_blocks, AssemblyContext, AssemblyError, CodeBlock, String, Token,
-    TokenStream, Vec,
+    crypto::hash::Blake3_192, AbsolutePath, BTreeSet, ByteReader, ByteWriter, CodeBlock,
+    Deserializable, LabelError, Serializable, SerializationError, String, ToString,
+    MODULE_PATH_DELIM, PROCEDURE_LABEL_PARSER,
 };
-use vm_core::{Felt, Operation};
+use core::{
+    fmt,
+    ops::{self, Deref},
+    str::from_utf8,
+};
 
 // PROCEDURE
 // ================================================================================================
 
-/// Contains metadata and code of a procedure.
+/// Contains metadata and MAST of a procedure.
+#[derive(Clone, Debug)]
 pub struct Procedure {
-    label: String,
+    id: ProcedureId,
+    label: ProcedureName,
     is_export: bool,
-    #[allow(dead_code)]
     num_locals: u32,
     code_root: CodeBlock,
+    callset: CallSet,
 }
 
 impl Procedure {
+    // CONSTRUCTOR
+    // --------------------------------------------------------------------------------------------
+    /// Returns a new [Procedure] instantiated with the specified properties.
+    pub fn new(
+        id: ProcedureId,
+        label: ProcedureName,
+        is_export: bool,
+        num_locals: u32,
+        code_root: CodeBlock,
+        callset: CallSet,
+    ) -> Self {
+        Procedure {
+            id,
+            label,
+            is_export,
+            num_locals,
+            code_root,
+            callset,
+        }
+    }
+
     // PUBLIC ACCESSORS
     // --------------------------------------------------------------------------------------------
 
-    /// Returns a root of this procedure's MAST.
-    pub fn code_root(&self) -> &CodeBlock {
-        &self.code_root
+    /// Returns ID of this procedure.
+    pub fn id(&self) -> &ProcedureId {
+        &self.id
     }
 
     /// Returns a label of this procedure.
-    pub fn label(&self) -> &str {
+    pub fn label(&self) -> &ProcedureName {
         &self.label
     }
 
@@ -35,96 +63,269 @@ impl Procedure {
         self.is_export
     }
 
-    // PARSER
+    /// Returns the number of memory locals reserved by the procedure.
+    #[allow(dead_code)]
+    pub fn num_locals(&self) -> u32 {
+        self.num_locals
+    }
+
+    /// Returns a root of this procedure's MAST.
+    pub fn code_root(&self) -> &CodeBlock {
+        &self.code_root
+    }
+
+    /// Returns a reference to a set of all procedures (identified by their IDs) which may be
+    /// called during the execution of this procedure.
+    pub fn callset(&self) -> &CallSet {
+        &self.callset
+    }
+}
+
+// PROCEDURE NAME
+// ================================================================================================
+
+/// Procedure name.
+///
+/// Procedure name must comply with the following rules:
+/// - It cannot be longer than 100 characters.
+/// - It must start with a ASCII letter.
+/// - It must consist of only ASCII letters, numbers, and underscores.
+///
+/// The only exception from the above rules is the name for the main procedure of an executable
+/// module which is set to `#main`.
+///
+/// # Type-safety
+/// Any instance of this type can be created only via the checked [`Self::try_from`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProcedureName {
+    name: String,
+}
+
+impl ProcedureName {
+    // CONSTANTS
     // --------------------------------------------------------------------------------------------
 
-    /// Parses and returns a single procedure from the provided token stream.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - The token stream does not contain a procedure header token at the current position.
-    /// - Parsing of procedure header token fails (e.g., invalid procedure label).
-    /// - The procedure is an exported procedure and `allow_export` is false.
-    /// - A procedure with the same label already exists in the provided context.
-    /// - Parsing of procedure body fails for any reason.
-    /// - The procedure body does not terminate with the `END` token.
-    pub fn parse(
-        tokens: &mut TokenStream,
-        context: &AssemblyContext,
-        allow_export: bool,
-        in_debug_mode: bool,
-    ) -> Result<Self, AssemblyError> {
-        let proc_start = tokens.pos();
+    /// Reserved name for a main procedure.
+    pub const MAIN_PROC_NAME: &str = "#main";
 
-        // read procedure name and consume the procedure header token
-        let header = tokens.read().expect("missing procedure header");
-        let (label, num_locals, is_export) = header.parse_proc()?;
-        if !allow_export && is_export {
-            return Err(AssemblyError::proc_export_not_allowed(header, &label));
+    // CONSTRUCTORS
+    // --------------------------------------------------------------------------------------------
+
+    /// Create a new procedure name with the reserved label for `main`.
+    pub fn main() -> Self {
+        Self {
+            name: Self::MAIN_PROC_NAME.into(),
         }
-        if context.contains_proc(&label) {
-            return Err(AssemblyError::duplicate_proc_label(header, &label));
-        }
-        tokens.advance();
+    }
 
-        // parse procedure body, and handle memory allocation/deallocation of locals if any are declared
-        let code_root = parse_proc_blocks(tokens, context, num_locals, in_debug_mode)?;
+    // TYPE-SAFE TRANSFORMATION
+    // --------------------------------------------------------------------------------------------
 
-        // consume the 'end' token
-        match tokens.read() {
-            None => Err(AssemblyError::unmatched_proc(
-                tokens.read_at(proc_start).expect("no proc token"),
-            )),
-            Some(token) => match token.parts()[0] {
-                Token::END => token.validate_end(),
-                _ => Err(AssemblyError::unmatched_proc(
-                    tokens.read_at(proc_start).expect("no proc token"),
-                )),
-            },
-        }?;
-        tokens.advance();
+    /// Append the procedure name to a module path.
+    pub fn to_absolute(&self, module: &AbsolutePath) -> AbsolutePath {
+        AbsolutePath::new_unchecked(format!("{}{MODULE_PATH_DELIM}{}", module.as_str(), &self.name))
+    }
 
-        // build and return the procedure
+    // HELPERS
+    // --------------------------------------------------------------------------------------------
+
+    /// Check if the procedure label is the reserved name for `main`.
+    pub fn is_main(&self) -> bool {
+        self.name == Self::MAIN_PROC_NAME
+    }
+}
+
+impl TryFrom<String> for ProcedureName {
+    type Error = LabelError;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
         Ok(Self {
-            label,
-            is_export,
-            num_locals,
-            code_root,
+            name: PROCEDURE_LABEL_PARSER.parse_label(name)?,
         })
     }
 }
 
-// HELPER FUNCTIONS
+impl Deref for ProcedureName {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.name
+    }
+}
+
+impl AsRef<str> for ProcedureName {
+    fn as_ref(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Serializable for ProcedureName {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        let name_bytes = self.name.as_bytes();
+        let num_bytes = name_bytes.len();
+
+        debug_assert!(
+            PROCEDURE_LABEL_PARSER.parse_label(self.name.clone()).is_ok(),
+            "The constructor should ensure the length is within limits"
+        );
+
+        target.write_u8(num_bytes as u8);
+        target.write_bytes(name_bytes);
+        Ok(())
+    }
+}
+
+impl Deserializable for ProcedureName {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let num_bytes = bytes.read_u8()?;
+        let name_bytes = bytes.read_bytes(num_bytes.into())?;
+        let name = from_utf8(name_bytes).map_err(|_| SerializationError::InvalidUtf8)?;
+        let name = ProcedureName::try_from(name.to_string())?;
+        Ok(name)
+    }
+}
+
+// PROCEDURE ID
 // ================================================================================================
 
-pub fn parse_proc_blocks(
-    tokens: &mut TokenStream,
-    context: &AssemblyContext,
-    num_proc_locals: u32,
-    in_debug_mode: bool,
-) -> Result<CodeBlock, AssemblyError> {
-    // parse the procedure body
-    let body = parse_code_blocks(tokens, context, num_proc_locals, in_debug_mode)?;
+/// A procedure identifier computed as a digest truncated to [`Self::LEN`] bytes, product of the
+/// label of a procedure
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ProcedureId(pub [u8; Self::SIZE]);
 
-    if num_proc_locals == 0 {
-        // if no allocation of locals is required, return the procedure body
-        return Ok(body);
+impl ProcedureId {
+    /// Truncated length of the id
+    pub const SIZE: usize = 24;
+
+    /// Creates a new procedure id from its path, composed by module path + name identifier.
+    ///
+    /// No validation is performed regarding the consistency of the path format.
+    pub fn new<L>(path: L) -> Self
+    where
+        L: AsRef<str>,
+    {
+        let mut digest = [0u8; Self::SIZE];
+        let hash = Blake3_192::hash(path.as_ref().as_bytes());
+        digest.copy_from_slice(&(*hash)[..Self::SIZE]);
+        Self(digest)
     }
 
-    let mut blocks = Vec::new();
-    let locals_felt = Felt::new(num_proc_locals as u64);
+    /// Computes the full path, given a module path and the procedure name
+    pub fn path<N, M>(name: N, module_path: M) -> String
+    where
+        N: AsRef<str>,
+        M: AsRef<str>,
+    {
+        format!("{}{MODULE_PATH_DELIM}{}", module_path.as_ref(), name.as_ref())
+    }
 
-    // allocate procedure locals before the procedure body
-    let alloc_ops = vec![Operation::Push(locals_felt), Operation::FmpUpdate];
-    blocks.push(CodeBlock::new_span(alloc_ops));
+    /// Creates a new procedure ID from a name to be resolved in the kernel.
+    pub fn from_kernel_name(name: &str) -> Self {
+        let path = format!("{}{MODULE_PATH_DELIM}{name}", AbsolutePath::KERNEL_PATH);
+        Self::new(path)
+    }
 
-    // add the procedure body code block
-    blocks.push(body);
+    /// Creates a new procedure ID from its name and module path.
+    ///
+    /// No validation is performed regarding the consistency of the module path or procedure name
+    /// format.
+    pub fn from_name(name: &str, module_path: &str) -> Self {
+        let path = Self::path(name, module_path);
+        Self::new(path)
+    }
 
-    // deallocate procedure locals after the procedure body
-    let dealloc_ops = vec![Operation::Push(-locals_felt), Operation::FmpUpdate];
-    blocks.push(CodeBlock::new_span(dealloc_ops));
+    /// Creates a new procedure ID from its local index and module path.
+    ///
+    /// No validation is performed regarding the consistency of the module path format.
+    pub fn from_index(index: u16, module_path: &str) -> Self {
+        let path = format!("{module_path}{MODULE_PATH_DELIM}{index}");
+        Self::new(path)
+    }
+}
 
-    // combine the local memory alloc/dealloc blocks with the procedure body code block
-    Ok(combine_blocks(blocks))
+impl From<[u8; ProcedureId::SIZE]> for ProcedureId {
+    fn from(value: [u8; ProcedureId::SIZE]) -> Self {
+        Self(value)
+    }
+}
+
+impl ops::Deref for ProcedureId {
+    type Target = [u8; Self::SIZE];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProcedureId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "0x")?;
+        for byte in self.0.iter() {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Serializable for ProcedureId {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        target.write_bytes(&self.0);
+        Ok(())
+    }
+}
+
+impl Deserializable for ProcedureId {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let proc_id_bytes = bytes.read_bytes(Self::SIZE)?;
+        let proc_id = proc_id_bytes.try_into().expect("to array conversion failed");
+        Ok(Self(proc_id))
+    }
+}
+
+// CALLSET
+// ================================================================================================
+
+/// Contains a list of all procedures which may be invoked from a procedure via call or syscall
+/// instructions.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct CallSet(BTreeSet<ProcedureId>);
+
+impl CallSet {
+    pub fn contains(&self, proc_id: &ProcedureId) -> bool {
+        self.0.contains(proc_id)
+    }
+
+    pub fn insert(&mut self, proc_id: ProcedureId) {
+        self.0.insert(proc_id);
+    }
+
+    pub fn append(&mut self, other: &CallSet) {
+        for &item in other.0.iter() {
+            self.0.insert(item);
+        }
+    }
+}
+
+impl ops::Deref for CallSet {
+    type Target = BTreeSet<ProcedureId>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{super::MAX_LABEL_LEN, LabelError, ProcedureName};
+
+    #[test]
+    fn test_procedure_name_max_len() {
+        assert!(ProcedureName::try_from("a".to_owned()).is_ok());
+
+        let long = "a".repeat(256);
+        assert_eq!(
+            ProcedureName::try_from(long.clone()),
+            Err(LabelError::LabelTooLong(long, MAX_LABEL_LEN))
+        );
+    }
 }

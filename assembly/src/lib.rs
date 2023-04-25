@@ -4,278 +4,362 @@
 #[macro_use]
 extern crate alloc;
 
+use core::ops::Deref;
 use vm_core::{
     code_blocks::CodeBlock,
+    crypto,
     utils::{
-        collections::{BTreeMap, Vec},
+        collections::{BTreeMap, BTreeSet, Vec},
         string::{String, ToString},
     },
-    Library, Program,
+    CodeBlockTable, Felt, Kernel, Operation, Program, StarkField, ONE, ZERO,
 };
-use vm_stdlib::StdLibrary;
 
-mod context;
-use context::AssemblyContext;
+mod library;
+pub use library::{Library, MaslLibrary, Module, Version};
 
 mod procedures;
-use procedures::Procedure;
+use procedures::{CallSet, Procedure};
+pub use procedures::{ProcedureId, ProcedureName};
 
 mod parsers;
-use parsers::{combine_blocks, parse_code_blocks};
+use parsers::PROCEDURE_LABEL_PARSER;
+pub use parsers::{parse_module, parse_program, ModuleAst, ProcedureAst, ProgramAst};
+
+mod serde;
+pub use serde::{ByteReader, ByteWriter, Deserializable, Serializable};
 
 mod tokens;
 use tokens::{Token, TokenStream};
 
 mod errors;
-pub use errors::AssemblyError;
+pub use errors::{AssemblyError, LabelError, LibraryError, ParsingError, SerializationError};
+
+mod assembler;
+pub use assembler::Assembler;
 
 #[cfg(test)]
 mod tests;
+
+// RE-EXPORTS
+// ================================================================================================
+
+pub use vm_core::utils;
 
 // CONSTANTS
 // ================================================================================================
 
 const MODULE_PATH_DELIM: &str = "::";
 
-// TYPE ALIASES
+/// The maximum number of constant inputs allowed for the `push` instruction.
+const MAX_PUSH_INPUTS: usize = 16;
+
+/// The maximum number of elements that can be popped from the advice stack in a single `adv_push`
+/// instruction.
+const ADVICE_READ_LIMIT: u8 = 16;
+
+/// The maximum number of bits by which a u32 value can be shifted in a bitwise operation.
+const MAX_U32_SHIFT_VALUE: u8 = 31;
+
+/// The maximum number of bits by which a u32 value can be rotated in a bitwise operation.
+const MAX_U32_ROTATE_VALUE: u8 = 31;
+
+/// The maximum number of bits allowed for the exponent parameter for exponentiation instructions.
+const MAX_EXP_BITS: u8 = 64;
+
+/// The maximum length of a constant or procedure's label.
+const MAX_LABEL_LEN: usize = 100;
+
+/// The required length of the hexadecimal representation for an input value when more than one hex
+/// input is provided to `push` masm operation without period separators.
+const HEX_CHUNK_SIZE: usize = 16;
+
+// TYPE-SAFE PATHS
 // ================================================================================================
 
-type ProcMap = BTreeMap<String, Procedure>;
-type ModuleMap = BTreeMap<String, ProcMap>;
-
-// ASSEMBLER
-// ================================================================================================
-
-/// TODO: add comments
-pub struct Assembler {
-    stdlib: StdLibrary,
-    parsed_modules: ModuleMap,
-    in_debug_mode: bool,
+/// Absolute path of a module or a procedure.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AbsolutePath {
+    path: String,
 }
 
-impl Assembler {
-    // CONSTRUCTOR
+impl AbsolutePath {
+    // CONSTANTS
     // --------------------------------------------------------------------------------------------
-    /// Returns a new instance of [Assembler] instantiated with empty module map.
-    /// Debug related decorators are added to span blocks when debug mode is on.
-    pub fn new(in_debug_mode: bool) -> Self {
+
+    /// Base kernel path
+    // TODO better use `MODULE_PATH_DELIM`. maybe require `const_format` crate?
+    pub const KERNEL_PATH: &str = "::sys";
+
+    // CONSTRUCTORS
+    // --------------------------------------------------------------------------------------------
+
+    /// Create a new absolute path without checking its integrity.
+    pub(crate) fn new_unchecked(path: String) -> Self {
+        Self { path }
+    }
+
+    pub fn kernel_path() -> Self {
         Self {
-            stdlib: StdLibrary::default(),
-            parsed_modules: BTreeMap::new(),
-            in_debug_mode,
+            path: Self::KERNEL_PATH.into(),
         }
     }
 
-    // PROGRAM COMPILER
+    // PUBLIC ACCESSORS
     // --------------------------------------------------------------------------------------------
 
-    /// Compiles the provided source code into a [Program]. The resulting program can be executed
-    /// on Miden VM.
-    pub fn compile(&self, source: &str) -> Result<Program, AssemblyError> {
-        let mut tokens = TokenStream::new(source)?;
-        let mut context = AssemblyContext::new();
-
-        // parse imported modules (if any), and add exported procedures from these modules to the
-        // current context; since we are in the root context here, we initialize dependency chain
-        // with an empty vector.
-        self.parse_imports(&mut tokens, &mut context, &mut Vec::new())?;
-
-        // parse locally defined procedures (if any), and add these procedures to the current
-        // context
-        while let Some(token) = tokens.read() {
-            let proc = match token.parts()[0] {
-                Token::PROC | Token::EXPORT => {
-                    Procedure::parse(&mut tokens, &context, false, self.in_debug_mode)?
-                }
-                _ => break,
-            };
-            context.add_local_proc(proc);
-        }
-
-        // make sure program body is present
-        let next_token = tokens
-            .read()
-            .ok_or_else(|| AssemblyError::unexpected_eof(tokens.pos()))?;
-        if next_token.parts()[0] != Token::BEGIN {
-            return Err(AssemblyError::unexpected_token(next_token, Token::BEGIN));
-        }
-
-        // parse program body and return the resulting program
-        let program_root = parse_program(&mut tokens, &context, self.in_debug_mode)?;
-        Ok(Program::new(program_root))
+    /// Label of the path.
+    ///
+    /// Will be the rightmost token separated by [`MODULE_PATH_DELIM`].
+    pub fn label(&self) -> &str {
+        self.path
+            .rsplit_once(MODULE_PATH_DELIM)
+            .expect("a valid absolute path should always have a namespace separator")
+            .1
     }
 
-    // IMPORT PARSERS
+    /// Namespace of the path.
+    ///
+    /// Will be the leftmost token separated by [`MODULE_PATH_DELIM`].
+    pub fn namespace(&self) -> &str {
+        self.path
+            .split_once(MODULE_PATH_DELIM)
+            .expect("a valid absolute path should always have a namespace separator")
+            .0
+    }
+
+    // TYPE-SAFE TRANSFORMATION
     // --------------------------------------------------------------------------------------------
 
-    /// Parses `use` instructions from the token stream.
-    ///
-    /// For each `use` instructions, retrieves exported procedures from the specified module and
-    /// inserts them into the provided context.
-    ///
-    /// If a module specified by `use` instruction hasn't been parsed yet, parses it, and adds
-    /// the parsed module to `self.parsed_modules`.
-    ///
-    /// # Errors
-    /// Returns an error if:
-    /// - The `use` instruction is malformed.
-    /// - A module specified by the `use` instruction could not be found.
-    /// - Parsing the specified module results in an error.
-    fn parse_imports<'a>(
-        &'a self,
-        tokens: &mut TokenStream,
-        context: &mut AssemblyContext<'a>,
-        dep_chain: &mut Vec<String>,
-    ) -> Result<(), AssemblyError> {
-        // read tokens from the token stream until all `use` tokens are consumed
-        while let Some(token) = tokens.read() {
-            match token.parts()[0] {
-                Token::USE => {
-                    // parse the `use` instruction to extract module path from it
-                    let module_path = &token.parse_use()?;
+    /// Append the name into the absolute path.
+    pub fn concatenate<N>(&self, name: N) -> Self
+    where
+        N: AsRef<str>,
+    {
+        Self {
+            path: format!("{}{MODULE_PATH_DELIM}{}", self.path, name.as_ref()),
+        }
+    }
+}
 
-                    // check if a module with the same path is currently being parsed somewhere up
-                    // the chain; if it is, then we have a circular dependency.
-                    if dep_chain.iter().any(|v| v == module_path) {
-                        dep_chain.push(module_path.clone());
-                        return Err(AssemblyError::circular_module_dependency(token, dep_chain));
-                    }
+impl From<&AbsolutePath> for ProcedureId {
+    fn from(path: &AbsolutePath) -> Self {
+        ProcedureId::new(path)
+    }
+}
 
-                    // add the current module to the dependency chain
-                    dep_chain.push(module_path.clone());
+impl Deref for AbsolutePath {
+    type Target = String;
 
-                    // if the module hasn't been parsed yet, retrieve its source from the library
-                    // and attempt to parse it; if the parsing is successful, this will also add
-                    // the parsed module to `self.parsed_modules`
-                    if !self.parsed_modules.contains_key(module_path) {
-                        let module_source =
-                            self.stdlib.get_module_source(module_path).map_err(|_| {
-                                AssemblyError::missing_import_source(token, module_path)
-                            })?;
-                        self.parse_module(module_source, module_path, dep_chain)?;
-                    }
+    fn deref(&self) -> &Self::Target {
+        &self.path
+    }
+}
 
-                    // get procedures from the module at the specified path; we are guaranteed to
-                    // not fail here because the above code block ensures that either there is a
-                    // parsed module for the specified path, or the function returns with an error
-                    let module_procs = self
-                        .parsed_modules
-                        .get(module_path)
-                        .expect("no module procs");
+impl AsRef<str> for AbsolutePath {
+    fn as_ref(&self) -> &str {
+        &self.path
+    }
+}
 
-                    // add all procedures to the current context; procedure labels are set to be
-                    // `last_part_of_module_path::procedure_name`. For example, `u256::add`.
-                    for proc in module_procs.values() {
-                        let path_parts = module_path.split(MODULE_PATH_DELIM).collect::<Vec<_>>();
-                        let num_parts = path_parts.len();
-                        context.add_imported_proc(path_parts[num_parts - 1], proc);
-                    }
+impl Serializable for AbsolutePath {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        target.write_str(&self.path)
+    }
+}
 
-                    // consume the `use` token and pop the current module of the dependency chain
-                    tokens.advance();
-                    dep_chain.pop();
-                }
-                _ => break,
+impl Deserializable for AbsolutePath {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        // TODO add name validation
+        // https://github.com/maticnetwork/miden/issues/583
+        let path = bytes.read_str()?;
+        if !path.contains(MODULE_PATH_DELIM) {
+            return Err(SerializationError::InvalidPathNoDelimiter);
+        }
+        Ok(Self {
+            path: path.to_string(),
+        })
+    }
+}
+
+/// Library namespace.
+///
+/// Will be `std` in the absolute procedure name `std::foo::bar::baz`.
+///
+/// # Type-safety
+///
+/// It is achieved as any instance of this type can be created only via the checked
+/// [`Self::try_from`]. A valid library namespace cannot contain a [`MODULE_PATH_DELIM`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct LibraryNamespace {
+    name: String,
+}
+
+impl LibraryNamespace {
+    // VALIDATORS
+    // --------------------------------------------------------------------------------------------
+
+    /// Perform the type validations.
+    fn validate(name: &str) -> Result<(), LibraryError> {
+        // TODO add name validation
+        // https://github.com/maticnetwork/miden/issues/583
+        if name.contains(MODULE_PATH_DELIM) {
+            return Err(LibraryError::library_name_with_delimiter(name));
+        }
+        Ok(())
+    }
+}
+
+impl TryFrom<String> for LibraryNamespace {
+    type Error = LibraryError;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        Self::validate(&name)?;
+        Ok(Self { name })
+    }
+}
+
+impl Deref for LibraryNamespace {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.name
+    }
+}
+
+impl AsRef<str> for LibraryNamespace {
+    fn as_ref(&self) -> &str {
+        &self.name
+    }
+}
+
+impl Serializable for LibraryNamespace {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        target.write_str(&self.name)
+    }
+}
+
+impl Deserializable for LibraryNamespace {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let name = bytes.read_str()?;
+        Self::validate(name).map_err(|_| SerializationError::InvalidNamespace)?;
+        Ok(Self {
+            name: name.to_string(),
+        })
+    }
+}
+
+/// Module path relative to a namespace.
+///
+/// Will be `foo::bar` in the absolute procedure name `std::foo::bar::baz`.
+///
+/// # Type-safety
+///
+/// It is achieved as any instance of this type can be created only via the checked
+/// [`Self::try_from`]. A valid module path cannot start or end with [`MODULE_PATH_DELIM`].
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ModulePath {
+    path: String,
+}
+
+impl ModulePath {
+    // CONSTRUCTORS
+    // --------------------------------------------------------------------------------------------
+
+    /// Create a new empty module path.
+    pub fn empty() -> Self {
+        Self {
+            path: String::new(),
+        }
+    }
+
+    // VALIDATORS
+    // --------------------------------------------------------------------------------------------
+
+    /// Perform the type validations.
+    fn validate(path: &str) -> Result<(), LibraryError> {
+        if path.starts_with(MODULE_PATH_DELIM) {
+            return Err(LibraryError::module_path_starts_with_delimiter(path));
+        } else if path.ends_with(MODULE_PATH_DELIM) {
+            return Err(LibraryError::module_path_ends_with_delimiter(path));
+        }
+        Ok(())
+    }
+
+    // TYPE-SAFE TRANSFORMATION
+    // --------------------------------------------------------------------------------------------
+
+    /// Append the module path to a library namespace.
+    pub fn to_absolute(&self, library: &LibraryNamespace) -> AbsolutePath {
+        let delimiter = if self.path.is_empty() { "" } else { MODULE_PATH_DELIM };
+        AbsolutePath::new_unchecked(format!("{}{delimiter}{}", library.as_str(), &self.path))
+    }
+
+    /// Strip the namespace from an absolute path and return the relative module path.
+    pub fn strip_namespace(path: &AbsolutePath) -> Self {
+        Self {
+            path: path
+                .as_str()
+                .split_once(MODULE_PATH_DELIM)
+                .expect("type-safety violation of absolute path")
+                .1
+                .to_string(),
+        }
+    }
+
+    /// Appends the given name into the module path. Will not prefix with the delimiter if the
+    /// current module path is empty.
+    pub fn concatenate<N>(&self, name: N) -> Self
+    where
+        N: AsRef<str>,
+    {
+        if self.path.is_empty() {
+            Self {
+                path: name.as_ref().to_string(),
+            }
+        } else {
+            Self {
+                path: format!("{}{MODULE_PATH_DELIM}{}", self.path, name.as_ref()),
             }
         }
-
-        Ok(())
-    }
-
-    /// Parses a set of exported procedures from the specified source code and adds these
-    /// procedures to `self.parsed_modules` using the specified path as the key.
-    #[allow(clippy::cast_ref_to_mut)]
-    fn parse_module(
-        &self,
-        source: &str,
-        path: &str,
-        dep_chain: &mut Vec<String>,
-    ) -> Result<(), AssemblyError> {
-        let mut tokens = TokenStream::new(source)?;
-        let mut context = AssemblyContext::new();
-
-        // parse imported modules (if any), and add exported procedures from these modules to
-        // the current context
-        self.parse_imports(&mut tokens, &mut context, dep_chain)?;
-
-        // parse procedures defined in the module, and add these procedures to the current
-        // context
-        while let Some(token) = tokens.read() {
-            let proc = match token.parts()[0] {
-                Token::PROC | Token::EXPORT => {
-                    Procedure::parse(&mut tokens, &context, true, self.in_debug_mode)?
-                }
-                _ => break,
-            };
-            context.add_local_proc(proc);
-        }
-
-        // make sure there are no dangling instructions after all procedures have been read
-        if !tokens.eof() {
-            let token = tokens.read().expect("no token before eof");
-            return Err(AssemblyError::dangling_ops_after_module(token, path));
-        }
-
-        // extract the exported local procedures from the context
-        let mut module_procs = context.into_local_procs();
-        module_procs.retain(|_, p| p.is_export());
-
-        // insert exported procedures into `self.parsed_procedures`
-        // TODO: figure out how to do this using interior mutability
-        unsafe {
-            let path = path.to_string();
-            let mutable_self = &mut *(self as *const _ as *mut Assembler);
-            mutable_self.parsed_modules.insert(path, module_procs);
-        }
-
-        Ok(())
     }
 }
 
-impl Default for Assembler {
-    /// Returns a new instance of [Assembler] instantiated with empty module map in non-debug mode.
-    fn default() -> Self {
-        Self::new(false)
+impl TryFrom<String> for ModulePath {
+    type Error = LibraryError;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        Self::validate(&path)?;
+        Ok(Self { path })
     }
 }
 
-// PARSERS
-// ================================================================================================
+impl Deref for ModulePath {
+    type Target = String;
 
-/// TODO: add comments
-fn parse_program(
-    tokens: &mut TokenStream,
-    context: &AssemblyContext,
-    in_debug_mode: bool,
-) -> Result<CodeBlock, AssemblyError> {
-    let program_start = tokens.pos();
-    // consume the 'begin' token
-    let header = tokens.read().expect("missing program header");
-    header.validate_begin()?;
-    tokens.advance();
-
-    // parse the program body
-    let root = parse_code_blocks(tokens, context, 0, in_debug_mode)?;
-
-    // consume the 'end' token
-    match tokens.read() {
-        None => Err(AssemblyError::unmatched_begin(
-            tokens.read_at(program_start).expect("no begin token"),
-        )),
-        Some(token) => match token.parts()[0] {
-            Token::END => token.validate_end(),
-            Token::ELSE => Err(AssemblyError::dangling_else(token)),
-            _ => Err(AssemblyError::unmatched_begin(
-                tokens.read_at(program_start).expect("no begin token"),
-            )),
-        },
-    }?;
-    tokens.advance();
-
-    // make sure there are no instructions after the end
-    if let Some(token) = tokens.read() {
-        return Err(AssemblyError::dangling_ops_after_program(token));
+    fn deref(&self) -> &Self::Target {
+        &self.path
     }
+}
 
-    Ok(root)
+impl AsRef<str> for ModulePath {
+    fn as_ref(&self) -> &str {
+        &self.path
+    }
+}
+
+impl Serializable for ModulePath {
+    fn write_into(&self, target: &mut ByteWriter) -> Result<(), SerializationError> {
+        target.write_str(&self.path)
+    }
+}
+
+impl Deserializable for ModulePath {
+    fn read_from(bytes: &mut ByteReader) -> Result<Self, SerializationError> {
+        let path = bytes.read_str()?;
+        Self::validate(path).map_err(|_| SerializationError::InvalidModulePath)?;
+        Ok(Self {
+            path: path.to_string(),
+        })
+    }
 }

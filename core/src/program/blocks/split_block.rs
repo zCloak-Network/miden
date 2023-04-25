@@ -1,16 +1,17 @@
-use super::{fmt, hasher, Box, CodeBlock, Digest};
+use super::{fmt, hasher, Box, CodeBlock, Digest, Felt, Operation};
 
 // SPLIT BLOCK
 // ================================================================================================
-/// A code block used to describe conditional execution.
+/// Block for conditional execution.
 ///
-/// When the VM executes a Split bock, either the true branch or the false branch of the block is
-/// executed. Specifically, if the top of the stack is `1`, the true branch is executed, and if
-/// the top of the stack is `0`, the false branch is executed. If the top of the stack is neither
-/// `0` nor `1`, the program fails.
+/// Executes the first branch if the top of the stack is `1` or the second branch if `0`. Fails if
+/// the top of the stack is neither `1` or `0` or if the branch execution fails.
 ///
-/// Hash of a Split block is computed by hashing a concatenation of the true and the false branch
-/// hashes.
+/// The hash of a split block is:
+///
+/// > hash(true_branch_hash || false_branch_hash, domain=SPLIT_DOMAIN)
+///
+/// Where `true_branch_hash` and `false_branch_hash` are 4 field elements (256 bits) each.
 #[derive(Clone, Debug)]
 pub struct Split {
     branches: Box<[CodeBlock; 2]>,
@@ -18,11 +19,16 @@ pub struct Split {
 }
 
 impl Split {
+    // CONSTANTS
+    // --------------------------------------------------------------------------------------------
+    /// The domain of the split block (used for control block hashing).
+    pub const DOMAIN: Felt = Felt::new(Operation::Split.op_code() as u64);
+
     // CONSTRUCTOR
     // --------------------------------------------------------------------------------------------
     /// Returns a new [Split] block instantiated with the specified true and false branches.
     pub fn new(t_branch: CodeBlock, f_branch: CodeBlock) -> Self {
-        let hash = hasher::merge(&[t_branch.hash(), f_branch.hash()]);
+        let hash = hasher::merge_in_domain(&[t_branch.hash(), f_branch.hash()], Self::DOMAIN);
         Self {
             branches: Box::new([t_branch, f_branch]),
             hash,
@@ -52,10 +58,6 @@ impl Split {
 
 impl fmt::Display for Split {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "if.true {} else {} end",
-            self.branches[0], self.branches[1]
-        )
+        write!(f, "if.true {} else {} end", self.branches[0], self.branches[1])
     }
 }

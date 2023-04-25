@@ -1,11 +1,13 @@
 use super::Example;
-use miden::{Assembler, Program, ProgramInputs};
-use vm_core::{Felt, FieldElement, StarkField};
+use miden::{
+    math::{Felt, FieldElement, StarkField},
+    Assembler, MemAdviceProvider, Program, StackInputs,
+};
 
 // EXAMPLE BUILDER
 // ================================================================================================
 
-pub fn get_example(n: usize) -> Example {
+pub fn get_example(n: usize) -> Example<MemAdviceProvider> {
     // generate the program and expected results
     let program = generate_fibonacci_program(n);
     let expected_result = vec![compute_fibonacci(n).as_int()];
@@ -16,8 +18,8 @@ pub fn get_example(n: usize) -> Example {
 
     Example {
         program,
-        inputs: ProgramInputs::from_stack_inputs(&[0, 1]).unwrap(),
-        pub_inputs: vec![0, 1],
+        stack_inputs: StackInputs::try_from_values([0, 1]).unwrap(),
+        advice_provider: MemAdviceProvider::default(),
         expected_result,
         num_outputs: 1,
     }
@@ -32,7 +34,7 @@ fn generate_fibonacci_program(n: usize) -> Program {
     // the last operation pops top 2 stack items, adds them, and pushes
     // the result back onto the stack
     let program = format!(
-        "begin 
+        "begin
             repeat.{}
                 swap dup.1 add
             end
@@ -40,8 +42,7 @@ fn generate_fibonacci_program(n: usize) -> Program {
         n - 1
     );
 
-    let assembler = Assembler::default();
-    assembler.compile(&program).unwrap()
+    Assembler::default().compile(&program).unwrap()
 }
 
 /// Computes the `n`-th term of Fibonacci sequence

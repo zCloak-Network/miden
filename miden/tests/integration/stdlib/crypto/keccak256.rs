@@ -1,4 +1,4 @@
-use super::{build_test, Felt, MIN_STACK_DEPTH};
+use super::{build_test, Felt, STACK_TOP_SIZE};
 use sha3::{Digest, Keccak256};
 use vm_core::utils::IntoBytes;
 
@@ -47,19 +47,19 @@ fn keccak256_2_to_1_hash() {
 
     // computing keccak256 of 64 -bytes input, on host CPU
     let mut hasher = Keccak256::new();
-    hasher.update(&i_digest);
+    hasher.update(i_digest);
     // producing 32 -bytes keccak256 digest
     let digest = hasher.finalize();
 
     // 32 -bytes digest represented in terms eight ( little endian )
     // 32 -bit integers such that it's easy to compare against final stack trace
-    let mut expected_stack = [0u64; MIN_STACK_DEPTH >> 1];
+    let mut expected_stack = [0u64; STACK_TOP_SIZE >> 1];
     to_stack(&digest, &mut expected_stack);
 
     // 64 -bytes input represented in terms of sixteen ( little endian ) 32 -bit
     // integers so that miden assembly implementation of keccak256 2-to-1 hash can
     // consume it and produce 32 -bytes digest
-    let mut in_stack = [0u64; MIN_STACK_DEPTH];
+    let mut in_stack = [0u64; STACK_TOP_SIZE];
     to_stack(&i_digest, &mut in_stack);
     in_stack.reverse();
 
@@ -84,7 +84,7 @@ fn to_stack(i_digest: &[u8], stack: &mut [u64]) {
             | (i_digest[(i << 3) + 3] as u64) << 24
             | (i_digest[(i << 3) + 2] as u64) << 16
             | (i_digest[(i << 3) + 1] as u64) << 8
-            | (i_digest[(i << 3)] as u64);
+            | (i_digest[(i << 3) + 0] as u64);
 
         // split into higher/ lower bits of u64
         let high = (word >> 32) as u32;
@@ -93,7 +93,7 @@ fn to_stack(i_digest: &[u8], stack: &mut [u64]) {
         // 64 -bit standard representation number kept as two 32 -bit numbers
         // where first one holds higher 32 -bits and second one holds remaining lower
         // 32 -bits of u64 word
-        stack[(i << 1)] = high as u64;
+        stack[(i << 1) + 0] = high as u64;
         stack[(i << 1) + 1] = low as u64;
     }
 }

@@ -16,25 +16,35 @@ const MAX_OPS_PER_BATCH: usize = GROUP_SIZE * BATCH_SIZE;
 
 // SPAN BLOCK
 // ================================================================================================
-/// A code block used to describe a linear sequence of operations (i.e., no branching or loops).
+/// Block for a linear sequence of operations (i.e., no branching or loops).
 ///
-/// When the VM executes a Span block, it breaks the sequence of operations into batches and
-/// groups according to the following rules:
-/// - A group may contain up to 9 operations or a single immediate value.
-/// - An operation carrying an immediate value cannot be in the 9th position in a group.
-/// - A batch may contain up to 8 groups.
-/// - There is no limit on the number of batches contained within a single span.
+/// Executes its operations in order. Fails if any of the operations fails.
 ///
-/// Thus, for example, executing 8 pushes in a row will result in two operation batches:
-/// - The first batch will contain 8 groups, with the first group containing 7 push opcodes,
-///   and the remaining 7 groups containing immediate values for each of the push operations.
-/// - The second batch will contain 2 groups, with the first group containing a single push opcode,
-///   and the second group containing the immediate value for the last push operation.
+/// A span is composed of operation batches, operation batches are composed of operation groups,
+/// operation groups encode the VM's operations and immediate values. These values are created
+/// according to these rules:
 ///
-/// If a sequence of operations does not have any operations which carry immediate values, then
-/// up to 72 operations can fit into a single batch.
+/// - A span contains one or more batches.
+/// - A batch contains exactly 8 groups.
+/// - A group contains exactly 9 operations or 1 immediate value.
+/// - NOOPs are used to fill a group or batch when necessary.
+/// - An immediate value follows the operation that requires it, using the next available group in
+///   the batch. If there are no batches available in the group, then both the operation and its
+///   immediate are moved to the next batch.
 ///
-/// TODO: describe how Span hash is computed.
+/// Example: 8 pushes result in two operation batches:
+///
+/// - First batch: First group with 7 push opcodes and 2 zero-paddings packed together, followed by
+///   7 groups with their respective immediate values.
+/// - Second batch: First group with the last push opcode and 8 zero-paddings packed together,
+///   followed by one immediate and 6 padding groups.
+///
+/// The hash of a span block is:
+///
+/// > hash(batches, domain=SPAN_DOMAIN)
+///
+/// Where `batches` is the concatenation of each `batch` in the span, and each batch is 8 field
+/// elements (512 bits).
 #[derive(Clone, Debug)]
 pub struct Span {
     op_batches: Vec<OpBatch>,
@@ -43,6 +53,11 @@ pub struct Span {
 }
 
 impl Span {
+    // CONSTANTS
+    // --------------------------------------------------------------------------------------------
+    /// The domain of the span block (used for control block hashing).
+    pub const DOMAIN: Felt = Felt::ZERO;
+
     // CONSTRUCTOR
     // --------------------------------------------------------------------------------------------
     /// Returns a new [Span] block instantiated with the specified operations.
@@ -141,7 +156,7 @@ impl fmt::Display for Span {
         write!(f, "span")?;
         for batch in self.op_batches.iter() {
             for op in batch.ops.iter() {
-                write!(f, " {}", op)?;
+                write!(f, " {op}")?;
             }
         }
         write!(f, " end")
@@ -321,7 +336,7 @@ impl OpBatchAccumulator {
 // ================================================================================================
 
 /// Groups the provided operations into batches as described in the docs for this module (i.e.,
-/// up to 9 operations per group, and up to 8 groups per batch).
+/// up to 9 operations per group, and 8 groups per batch).
 ///
 /// After the operations have been grouped, computes the hash of the block.
 fn batch_ops(ops: Vec<Operation>) -> (Vec<OpBatch>, Digest) {
@@ -352,8 +367,7 @@ fn batch_ops(ops: Vec<Operation>) -> (Vec<OpBatch>, Digest) {
     }
 
     // compute the hash of all operation groups
-    let num_op_groups = get_span_op_group_count(&batches);
-    let op_groups = &flatten_slice_elements(&batch_groups)[..num_op_groups];
+    let op_groups = &flatten_slice_elements(&batch_groups);
     let hash = hasher::hash_elements(op_groups);
 
     (batches, hash)
@@ -382,10 +396,7 @@ fn validate_decorators(operations: &[Operation], decorators: &DecoratorList) {
     if !decorators.is_empty() {
         // check if decorator list is sorted
         for i in 0..(decorators.len() - 1) {
-            debug_assert!(
-                decorators[i + 1].0 >= decorators[i].0,
-                "unsorted decorators list"
-            );
+            debug_assert!(decorators[i + 1].0 >= decorators[i].0, "unsorted decorators list");
         }
         // assert the last index in decorator list is less than operations vector length
         debug_assert!(
@@ -418,7 +429,7 @@ mod tests {
 
         assert_eq!(batch_groups, batch.groups);
         assert_eq!([1_usize, 0, 0, 0, 0, 0, 0, 0], batch.op_counts);
-        assert_eq!(hasher::hash_elements(&batch_groups[..1]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- two operations ---------------------------------------------------------------------
         let ops = vec![Operation::Add, Operation::Mul];
@@ -434,7 +445,7 @@ mod tests {
 
         assert_eq!(batch_groups, batch.groups);
         assert_eq!([2_usize, 0, 0, 0, 0, 0, 0, 0], batch.op_counts);
-        assert_eq!(hasher::hash_elements(&batch_groups[..1]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- one group with one immediate value -------------------------------------------------
         let ops = vec![Operation::Add, Operation::Push(Felt::new(12345678))];
@@ -451,7 +462,7 @@ mod tests {
 
         assert_eq!(batch_groups, batch.groups);
         assert_eq!([2_usize, 0, 0, 0, 0, 0, 0, 0], batch.op_counts);
-        assert_eq!(hasher::hash_elements(&batch_groups[..2]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- one group with 7 immediate values --------------------------------------------------
         let ops = vec![
@@ -532,7 +543,7 @@ mod tests {
         assert_eq!(batch1_groups, batch1.groups);
 
         let all_groups = [batch0_groups, batch1_groups].concat();
-        assert_eq!(hasher::hash_elements(&all_groups[..10]), hash);
+        assert_eq!(hasher::hash_elements(&all_groups), hash);
 
         // --- immediate values in-between groups -------------------------------------------------
         let ops = vec![
@@ -568,7 +579,7 @@ mod tests {
 
         assert_eq!([9_usize, 0, 0, 1, 0, 0, 0, 0], batch.op_counts);
         assert_eq!(batch_groups, batch.groups);
-        assert_eq!(hasher::hash_elements(&batch_groups[..4]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- push at the end of a group is moved into the next group ----------------------------
         let ops = vec![
@@ -602,7 +613,7 @@ mod tests {
 
         assert_eq!(batch_groups, batch.groups);
         assert_eq!([8_usize, 1, 0, 0, 0, 0, 0, 0], batch.op_counts);
-        assert_eq!(hasher::hash_elements(&batch_groups[..4]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- push at the end of a group is moved into the next group ----------------------------
         let ops = vec![
@@ -636,7 +647,7 @@ mod tests {
 
         assert_eq!(batch_groups, batch.groups);
         assert_eq!([8_usize, 0, 1, 0, 0, 0, 0, 0], batch.op_counts);
-        assert_eq!(hasher::hash_elements(&batch_groups[..4]), hash);
+        assert_eq!(hasher::hash_elements(&batch_groups), hash);
 
         // --- push at the end of the 7th group overflows to the next batch -----------------------
         let ops = vec![
@@ -700,7 +711,7 @@ mod tests {
         assert_eq!([2_usize, 0, 0, 0, 0, 0, 0, 0], batch1.op_counts);
 
         let all_groups = [batch0_groups, batch1_groups].concat();
-        assert_eq!(hasher::hash_elements(&all_groups[..10]), hash);
+        assert_eq!(hasher::hash_elements(&all_groups), hash);
     }
 
     // TEST HELPERS

@@ -1,11 +1,13 @@
 use super::{
     super::{Trace, NUM_RAND_ROWS},
-    build_trace_from_ops_with_inputs, rand_array, Felt, LookupTableRow, Operation, ProgramInputs,
-    Word, ONE, ZERO,
+    build_trace_from_ops_with_inputs, rand_array, AdviceInputs, Felt, LookupTableRow, Operation,
+    Vec, Word, ONE, ZERO,
 };
-use crate::chiplets::SiblingTableRow;
+use crate::{chiplets::SiblingTableRow, StackInputs};
 use vm_core::{
-    chiplets::hasher::P1_COL_IDX, AdviceSet, FieldElement, StarkField, AUX_TRACE_RAND_ELEMENTS,
+    chiplets::hasher::P1_COL_IDX,
+    crypto::merkle::{MerkleStore, MerkleTree, NodeIndex},
+    FieldElement, StarkField, AUX_TRACE_RAND_ELEMENTS,
 };
 
 // SIBLING TABLE TESTS
@@ -14,19 +16,22 @@ use vm_core::{
 #[test]
 #[allow(clippy::needless_range_loop)]
 fn hasher_p1_mp_verify() {
-    let tree = build_merkle_tree();
-    let node = tree.get_node(3, 1).unwrap();
+    let (tree, leaves) = build_merkle_tree();
+    let store = MerkleStore::new().with_merkle_tree(leaves).unwrap();
+    let node = tree.get_node(NodeIndex::new(3, 1)).unwrap();
 
     // build program inputs
-    let mut init_stack = vec![3, 1];
+    let mut init_stack = vec![];
     append_word(&mut init_stack, node);
+    init_stack.extend_from_slice(&[3, 1]);
     append_word(&mut init_stack, tree.root());
     init_stack.reverse();
-    let inputs = ProgramInputs::new(&init_stack, &[], vec![tree]).unwrap();
+    let stack_inputs = StackInputs::try_from_values(init_stack).unwrap();
+    let advice_inputs = AdviceInputs::default().with_merkle_store(store);
 
     // build execution trace and extract the sibling table column from it
     let ops = vec![Operation::MpVerify];
-    let mut trace = build_trace_from_ops_with_inputs(ops, inputs);
+    let mut trace = build_trace_from_ops_with_inputs(ops, stack_inputs, advice_inputs);
     let alphas = rand_array::<Felt, AUX_TRACE_RAND_ELEMENTS>();
     let aux_columns = trace.build_aux_segment(&[], &alphas).unwrap();
     let p1 = aux_columns.get_column(P1_COL_IDX);
@@ -41,31 +46,35 @@ fn hasher_p1_mp_verify() {
 #[test]
 #[allow(clippy::needless_range_loop)]
 fn hasher_p1_mr_update() {
-    let tree = build_merkle_tree();
+    let (tree, leaves) = build_merkle_tree();
     let index = 5_u64;
-    let old_node = tree.get_node(3, index).unwrap();
+    let old_node = tree.get_node(NodeIndex::new(3, index)).unwrap();
     let new_node = init_leaf(11);
-    let path = tree.get_path(3, index).unwrap();
+    let path = tree.get_path(NodeIndex::new(3, index)).unwrap();
 
     // build program inputs
-    let mut init_stack = vec![3, index];
+    let mut init_stack = vec![];
     append_word(&mut init_stack, old_node);
-    append_word(&mut init_stack, new_node);
+    init_stack.extend_from_slice(&[3, index]);
     append_word(&mut init_stack, tree.root());
+    append_word(&mut init_stack, new_node);
+
     init_stack.reverse();
-    let inputs = ProgramInputs::new(&init_stack, &[], vec![tree]).unwrap();
+    let stack_inputs = StackInputs::try_from_values(init_stack).unwrap();
+    let store = MerkleStore::new().with_merkle_tree(leaves).unwrap();
+    let advice_inputs = AdviceInputs::default().with_merkle_store(store);
 
     // build execution trace and extract the sibling table column from it
-    let ops = vec![Operation::MrUpdate(false)];
-    let mut trace = build_trace_from_ops_with_inputs(ops, inputs);
+    let ops = vec![Operation::MrUpdate];
+    let mut trace = build_trace_from_ops_with_inputs(ops, stack_inputs, advice_inputs);
     let alphas = rand_array::<Felt, AUX_TRACE_RAND_ELEMENTS>();
     let aux_columns = trace.build_aux_segment(&[], &alphas).unwrap();
     let p1 = aux_columns.get_column(P1_COL_IDX);
 
     let row_values = [
-        SiblingTableRow::new(Felt::new(index), path[0]).to_value(&alphas),
-        SiblingTableRow::new(Felt::new(index >> 1), path[1]).to_value(&alphas),
-        SiblingTableRow::new(Felt::new(index >> 2), path[2]).to_value(&alphas),
+        SiblingTableRow::new(Felt::new(index), path[0]).to_value(&trace.main_trace, &alphas),
+        SiblingTableRow::new(Felt::new(index >> 1), path[1]).to_value(&trace.main_trace, &alphas),
+        SiblingTableRow::new(Felt::new(index >> 2), path[2]).to_value(&trace.main_trace, &alphas),
     ];
 
     // make sure the first entry is ONE
@@ -139,10 +148,10 @@ fn hasher_p1_mr_update() {
 // HELPER FUNCTIONS
 // ================================================================================================
 
-fn build_merkle_tree() -> AdviceSet {
+fn build_merkle_tree() -> (MerkleTree, Vec<Word>) {
     // build a Merkle tree
     let leaves = init_leaves(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    AdviceSet::new_merkle_tree(leaves.to_vec()).unwrap()
+    (MerkleTree::new(leaves.clone()).unwrap(), leaves)
 }
 
 fn init_leaves(values: &[u64]) -> Vec<Word> {

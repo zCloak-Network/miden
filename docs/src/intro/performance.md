@@ -17,12 +17,12 @@ When executed on a single CPU core, the current version of Miden VM operates at 
 
 | VM cycles       | Execution time | Proving time | RAM consumed  | Proof size |
 | :-------------: | :------------: | :----------: | :-----------: | :--------: |
-| 2<sup>10</sup>  |  2 ms          | 80 ms        | 13 MB         | 49 KB      |
-| 2<sup>12</sup>  |  4 ms          | 280 ms       | 41 MB         | 59 KB      |
-| 2<sup>14</sup>  |  10 ms         | 1.05 sec     | 155 MB        | 70 KB      |
-| 2<sup>16</sup>  |  30 ms         | 4.2 sec      | 624 MB        | 79 KB      |
-| 2<sup>18</sup>  |  90 ms         | 18 sec       | 2.5 GB        | 91 KB      |
-| 2<sup>20</sup>  |  330 ms        | 79 sec       | 9.5 GB        | 104 KB     |
+| 2<sup>10</sup>  |  1 ms          | 80 ms        | 20 MB         | 47 KB      |
+| 2<sup>12</sup>  |  2 ms          | 260 ms       | 52 MB         | 57 KB      |
+| 2<sup>14</sup>  |  8 ms          | 0.9 sec      | 240 MB        | 66 KB      |
+| 2<sup>16</sup>  |  28 ms         | 4.6 sec      | 950 MB        | 77 KB      |
+| 2<sup>18</sup>  |  85 ms         | 15.5 sec     | 3.7 GB        | 89 KB      |
+| 2<sup>20</sup>  |  310 ms        | 67 sec       | 14 GB         | 100 KB     |
 
 As can be seen from the above, proving time roughly doubles with every doubling in the number of cycles, but proof size grows much slower.
 
@@ -30,19 +30,21 @@ We can also generate proofs at a higher security level. The cost of doing so is 
 
 | VM cycles       | Execution time | Proving time | RAM consumed  | Proof size |
 | :-------------: | :------------: | :----------: | :-----------: | :--------: |
-| 2<sup>10</sup>  | 2 ms           | 340 ms       | 24 MB         | 72 KB      |
-| 2<sup>12</sup>  | 4 ms           | 560 ms       | 86 MB         | 84 KB      |
-| 2<sup>14</sup>  | 10 ms          | 2.2 sec      | 335 MB        | 97 KB      |
-| 2<sup>16</sup>  | 30 ms          | 7.7 sec      | 1.4 GB        | 113 KB     |
-| 2<sup>18</sup>  | 90 ms          | 34 sec       | 5.4 GB        | 130 KB     |
-| 2<sup>20</sup>  | 330 ms         | 143 sec      | 19.7 GB       | 147 KB     |
+| 2<sup>10</sup>  | 1 ms           | 300 ms       | 30 MB         | 61 KB      |
+| 2<sup>12</sup>  | 2 ms           | 590 ms       | 106 MB        | 78 KB      |
+| 2<sup>14</sup>  | 8 ms           | 1.7 sec      | 500 MB        | 91 KB      |
+| 2<sup>16</sup>  | 28 ms          | 6.7 sec      | 2.0 GB        | 106 KB     |
+| 2<sup>18</sup>  | 85 ms          | 27.5 sec     | 8.0 GB        | 122 KB     |
+| 2<sup>20</sup>  | 310 ms         | 126 sec      | 24.0 GB       | 138 KB     |
 
 ## Multi-core prover performance
-STARK proof generation is massively parallelizable. Thus, by taking advantage of multiple CPU cores we can dramatically reduce proof generation time. For example, when executed on a high-end 8-core CPU (Apple M1 Pro), the current version of Miden VM operates at around 80 KHz. And when executed on a high-end 64-core CPU (Amazon Graviton 3), the VM operates at around 320 KHz.
+STARK proof generation is massively parallelizable. Thus, by taking advantage of multiple CPU cores we can dramatically reduce proof generation time. For example, when executed on an 8-core CPU (Apple M1 Pro), the current version of Miden VM operates at around 100 KHz. And when executed on a 64-core CPU (Amazon Graviton 3), the VM operates at around 250 KHz.
 
 In the benchmarks below, the VM executes the same Fibonacci calculator program for 2<sup>20</sup> cycles at 96-bit target security level:
 
-| Machine                        | Execution time | Proving time |
-| ------------------------------ | :------------: | :----------: |
-| Apple M1 Pro (8 threads)       | 330 ms         | 12.8 sec     |
-| Amazon Graviton 3 (64 threads) | 390 ms         | 3.2 sec      |
+| Machine                        | Execution time | Proving time | Execution % |
+| ------------------------------ | :------------: | :----------: | :---------: |
+| Apple M1 Pro (8 threads)       | 310 ms         | 9.8 sec      | 3.1%        |
+| Apple M2 Max (16 threads)      | 290 ms         | 7.7 sec      | 3.6%        |
+| AMD Ryzen 9 5950X (16 threads) | 270 ms         | 10.7 sec     | 2.6%        |
+| Amazon Graviton 3 (64 threads) | 330 ms         | 3.7 sec      | 9.0%        |

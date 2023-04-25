@@ -62,8 +62,13 @@ impl CodeBlock {
     }
 
     /// TODO: add comments
-    pub fn new_call(code_hash: Digest) -> Self {
-        Self::Call(Call::new(code_hash))
+    pub fn new_call(fn_hash: Digest) -> Self {
+        Self::Call(Call::new(fn_hash))
+    }
+
+    /// TODO: add comments
+    pub fn new_syscall(fn_hash: Digest) -> Self {
+        Self::Call(Call::new_syscall(fn_hash))
     }
 
     /// TODO: add comments
@@ -90,17 +95,29 @@ impl CodeBlock {
             CodeBlock::Proxy(block) => block.hash(),
         }
     }
+
+    /// Returns the domain of the code block
+    pub fn domain(&self) -> Felt {
+        match self {
+            CodeBlock::Call(block) => block.domain(),
+            CodeBlock::Join(_) => Join::DOMAIN,
+            CodeBlock::Loop(_) => Loop::DOMAIN,
+            CodeBlock::Span(_) => Span::DOMAIN,
+            CodeBlock::Split(_) => Split::DOMAIN,
+            CodeBlock::Proxy(_) => panic!("Can't fetch `domain` for a `Proxy` block!"),
+        }
+    }
 }
 
 impl fmt::Display for CodeBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CodeBlock::Span(block) => write!(f, "{}", block),
-            CodeBlock::Join(block) => write!(f, "{}", block),
-            CodeBlock::Split(block) => write!(f, "{}", block),
-            CodeBlock::Loop(block) => write!(f, "{}", block),
-            CodeBlock::Call(block) => write!(f, "{}", block),
-            CodeBlock::Proxy(block) => write!(f, "{}", block),
+            CodeBlock::Span(block) => write!(f, "{block}"),
+            CodeBlock::Join(block) => write!(f, "{block}"),
+            CodeBlock::Split(block) => write!(f, "{block}"),
+            CodeBlock::Loop(block) => write!(f, "{block}"),
+            CodeBlock::Call(block) => write!(f, "{block}"),
+            CodeBlock::Proxy(block) => write!(f, "{block}"),
         }
     }
 }

@@ -1,8 +1,8 @@
-use vm_core::{range::V_COL_IDX, utils::uninit_vector};
-use winterfell::Matrix;
-
-use super::{BTreeMap, CycleRangeChecks, Felt, FieldElement, RangeCheckFlag, Vec};
-use crate::trace::{build_lookup_table_row_values, NUM_RAND_ROWS};
+use super::{
+    build_lookup_table_row_values, uninit_vector, BTreeMap, ColMatrix, CycleRangeChecks, Felt,
+    FieldElement, RangeCheckFlag, Vec, NUM_RAND_ROWS,
+};
+use vm_core::range::V_COL_IDX;
 
 // AUXILIARY TRACE BUILDER
 // ================================================================================================
@@ -16,7 +16,7 @@ pub struct AuxTraceBuilder {
     // TODO: once we switch to backfilling memory range checks this approach can change to tracking
     // vectors of hints and rows like in the Stack and Hasher AuxTraceBuilders, and the
     // CycleRangeChecks struct can be removed.
-    cycle_range_checks: BTreeMap<usize, CycleRangeChecks>,
+    cycle_range_checks: BTreeMap<u32, CycleRangeChecks>,
     // A trace-length vector of RangeCheckFlags which indicate how many times the range check value
     // at that row should be included in the trace.
     row_flags: Vec<RangeCheckFlag>,
@@ -28,7 +28,7 @@ impl AuxTraceBuilder {
     // CONSTRUCTOR
     // --------------------------------------------------------------------------------------------
     pub fn new(
-        cycle_range_checks: BTreeMap<usize, CycleRangeChecks>,
+        cycle_range_checks: BTreeMap<u32, CycleRangeChecks>,
         row_flags: Vec<RangeCheckFlag>,
         start_16bit: usize,
     ) -> Self {
@@ -58,7 +58,7 @@ impl AuxTraceBuilder {
     ///    `p1`. It contains the product of the lookups performed by the Stack at each row.
     pub fn build_aux_columns<E: FieldElement<BaseField = Felt>>(
         &self,
-        main_trace: &Matrix<Felt>,
+        main_trace: &ColMatrix<Felt>,
         rand_elements: &[E],
     ) -> Vec<Vec<E>> {
         let p0 = self.build_aux_col_p0(main_trace, rand_elements);
@@ -71,7 +71,7 @@ impl AuxTraceBuilder {
     /// 16-bit section of the table so that the starting and ending value are both one.
     fn build_aux_col_p0<E: FieldElement<BaseField = Felt>>(
         &self,
-        main_trace: &Matrix<Felt>,
+        main_trace: &ColMatrix<Felt>,
         rand_elements: &[E],
     ) -> Vec<E> {
         let mut aux_column = E::zeroed_vector(main_trace.num_rows());
@@ -82,12 +82,8 @@ impl AuxTraceBuilder {
         aux_column[0] = E::ONE;
 
         // Build the execution trace of the 8-bit running product.
-        for (row_idx, (hint, lookup)) in self
-            .row_flags
-            .iter()
-            .zip(v_col.iter())
-            .enumerate()
-            .take(self.start_16bit)
+        for (row_idx, (hint, lookup)) in
+            self.row_flags.iter().zip(v_col.iter()).enumerate().take(self.start_16bit)
         {
             // This is the 8-bit section, where the running product must be built up.
             aux_column[row_idx + 1] = aux_column[row_idx] * hint.to_value(*lookup, rand_elements);
@@ -138,12 +134,12 @@ impl AuxTraceBuilder {
     /// range check lookups performed by user operations match those executed by the Range Checker.
     fn build_aux_col_p1<E: FieldElement<BaseField = Felt>>(
         &self,
-        main_trace: &Matrix<Felt>,
+        main_trace: &ColMatrix<Felt>,
         alphas: &[E],
     ) -> (Vec<E>, Vec<E>) {
         // compute the inverses for range checks performed by operations.
         let (_, inv_row_values) =
-            build_lookup_table_row_values(&self.cycle_range_check_values(), alphas);
+            build_lookup_table_row_values(&self.cycle_range_check_values(), main_trace, alphas);
 
         // allocate memory for the running product column and set the initial value to ONE
         let mut q = unsafe { uninit_vector(main_trace.num_rows()) };
@@ -155,13 +151,13 @@ impl AuxTraceBuilder {
         // index is always one row behind, since `q` is filled with intermediate values in the same
         // row as the operation is executed, whereas `p1` is filled with result values that are
         // added to the next row after the operation's execution.
-        let mut p1_idx = 0;
+        let mut p1_idx = 0_usize;
         // keep track of the next row to be included from the user op range check values.
         let mut rc_user_op_idx = 0;
 
         // the first half of the trace only includes values from the operations.
-        for (clk, range_checks) in self.cycle_range_checks.range(0..=self.start_16bit) {
-            let clk = *clk;
+        for (clk, range_checks) in self.cycle_range_checks.range(0..=self.start_16bit as u32) {
+            let clk = *clk as usize;
 
             // if we skipped some cycles since the last update was processed, values in the last
             // updated row should by copied over until the current cycle.
@@ -175,7 +171,7 @@ impl AuxTraceBuilder {
             p1_idx = clk + 1;
 
             // update the intermediate values in the q column.
-            q[clk] = range_checks.to_stack_value(alphas);
+            q[clk] = range_checks.to_stack_value(main_trace, alphas);
 
             // include the operation lookups in the running product.
             p1[p1_idx] = p1[clk] * inv_row_values[rc_user_op_idx];
@@ -204,9 +200,9 @@ impl AuxTraceBuilder {
 
             p1[p1_idx] = p1[row_idx] * hint.to_value(*lookup, alphas);
 
-            if let Some(range_check) = self.cycle_range_checks.get(&row_idx) {
+            if let Some(range_check) = self.cycle_range_checks.get(&(row_idx as u32)) {
                 // update the intermediate values in the q column.
-                q[row_idx] = range_check.to_stack_value(alphas);
+                q[row_idx] = range_check.to_stack_value(main_trace, alphas);
 
                 // include the operation lookups in the running product.
                 p1[p1_idx] *= inv_row_values[rc_user_op_idx];
