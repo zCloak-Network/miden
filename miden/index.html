@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>midem test demo </title>
+  </head>
+  <body>
+    <script type="module">
+      import init, {execute_zk_program, generate_program_hash, verify_zk_program, init_panic_hook} from "./pkg/miden_vm.js";
+       async function sleep(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+      init().then( m => {
+        let t1 = new Date() 
+        init_panic_hook()
+
+        let program = `
+        begin push.3 push.5 add end
+        `;
+
+        // the first array is public input, the sec is secret input
+        let output = execute_zk_program(program, "12","12")
+
+        console.log(output)
+        let program_hash = generate_program_hash(program)
+
+        console.log(program_hash)
+
+        // for the verifier to verify the ZKP, if valid, the verification_result should be a u32 (i.g. 96)
+        let verification_result = verify_zk_program(program_hash, "12", output);
+        console.log(verification_result)
+
+
+              }).catch(console.error);
+      </script>
+  </body>
+</html>

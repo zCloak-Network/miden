@@ -36,7 +36,7 @@ impl Cli {
             Actions::Analyze(analyze) => analyze.execute(),
             Actions::Compile(compile) => compile.execute(),
             // Actions::Debug(debug) => debug.execute(),
-             Actions::Debug(debug) => return Ok(()),
+            Actions::Debug(debug) => return Ok(()),
 
             Actions::Example(example) => example.execute(),
             Actions::Prove(prove) => prove.execute(),
@@ -44,7 +44,7 @@ impl Cli {
             Actions::Verify(verify) => verify.execute(),
             #[cfg(feature = "std")]
             // Actions::Repl(repl) => repl.execute(),
-            Actions::Repl(repl) => return Ok(())
+            Actions::Repl(repl) => return Ok(()),
         }
     }
 }

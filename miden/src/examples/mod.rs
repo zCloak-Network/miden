@@ -82,7 +82,8 @@ impl ExampleOptions {
         // execute the program and generate the proof of execution
         let now = Instant::now();
         let (stack_outputs, proof) =
-            miden_vm::prove(&program, stack_inputs.clone(), advice_provider, proof_options).unwrap();
+            miden_vm::prove(&program, stack_inputs.clone(), advice_provider, proof_options)
+                .unwrap();
         println!("--------------------------------");
 
         println!(
