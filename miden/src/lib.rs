@@ -69,7 +69,6 @@ pub fn execute_zk_program(
     return final_result;
 }
 
-// // todo: add verify function amd test
 
 #[wasm_bindgen]
 pub fn generate_program_hash(program_in_assembly: String) -> String {

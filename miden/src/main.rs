@@ -35,13 +35,16 @@ impl Cli {
         match &self.action {
             Actions::Analyze(analyze) => analyze.execute(),
             Actions::Compile(compile) => compile.execute(),
-            Actions::Debug(debug) => debug.execute(),
+            // Actions::Debug(debug) => debug.execute(),
+             Actions::Debug(debug) => return Ok(()),
+
             Actions::Example(example) => example.execute(),
             Actions::Prove(prove) => prove.execute(),
             Actions::Run(run) => run.execute(),
             Actions::Verify(verify) => verify.execute(),
             #[cfg(feature = "std")]
-            Actions::Repl(repl) => repl.execute(),
+            // Actions::Repl(repl) => repl.execute(),
+            Actions::Repl(repl) => return Ok(())
         }
     }
 }

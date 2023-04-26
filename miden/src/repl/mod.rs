@@ -4,7 +4,7 @@ use miden_vm::{
     MemAdviceProvider, StackInputs, Word,
 };
 use processor::Process;
-use rustyline::{error::ReadlineError, Editor};
+// use rustyline::{error::ReadlineError, Editor};
 
 /// This work is in continuation to the amazing work done by team `Scribe`
 /// [here](https://github.com/ControlCplusControlV/Scribe/blob/main/transpiler/src/repl.rs#L8)
@@ -125,136 +125,136 @@ use rustyline::{error::ReadlineError, Editor};
 /// Memory at address 87 is empty
 
 /// Initiates the Miden Repl tool.
-pub fn start_repl() {
-    let mut program_lines: Vec<String> = Vec::new();
+// pub fn start_repl() {
+//     let mut program_lines: Vec<String> = Vec::new();
 
-    println!("========================== Miden REPL ============================");
-    println!();
-    // prints out all the available commands in the Miden Repl tool.
-    print_instructions();
+//     println!("========================== Miden REPL ============================");
+//     println!();
+//     // prints out all the available commands in the Miden Repl tool.
+//     print_instructions();
 
-    // flag to determine if the stack should be printed or not post the execution of the
-    // last command.
-    let mut should_print_stack = false;
+//     // flag to determine if the stack should be printed or not post the execution of the
+//     // last command.
+//     let mut should_print_stack = false;
 
-    // state of the entire memory at the latest clock cycle.
-    let mut memory: Vec<(u64, Word)> = Vec::new();
+//     // state of the entire memory at the latest clock cycle.
+//     let mut memory: Vec<(u64, Word)> = Vec::new();
 
-    // initializing readline.
-    let mut rl = Editor::<()>::new().expect("Readline couldn't be initialized");
-    loop {
-        let program = format!(
-            "begin\n{}\nend",
-            program_lines
-                .iter()
-                .map(|l| format!("    {}", l))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
+//     // initializing readline.
+//     let mut rl = Editor::<()>::new().expect("Readline couldn't be initialized");
+//     loop {
+//         let program = format!(
+//             "begin\n{}\nend",
+//             program_lines
+//                 .iter()
+//                 .map(|l| format!("    {}", l))
+//                 .collect::<Vec<_>>()
+//                 .join("\n")
+//         );
 
-        let result = execute(program.clone());
+//         let result = execute(program.clone());
 
-        if !program_lines.is_empty() {
-            match result {
-                Ok((mem, stack_state)) => {
-                    if should_print_stack {
-                        print_stack(stack_state);
-                    }
-                    memory = mem;
-                }
-                Err(e) => {
-                    println!("{}", format!("Error running program: {:?}", e));
-                    program_lines.pop();
-                }
-            }
-        } else {
-            if should_print_stack {
-                println!("{}", str::repeat("0 ", 16));
-            }
-        }
-        match rl.readline(">> ") {
-            Ok(line) => {
-                if line == "!program" {
-                    println!("{}", program);
-                    should_print_stack = false;
-                } else if line == "!help" {
-                    // prints out all the available commands in the Miden Repl tool.
-                    print_instructions();
-                    should_print_stack = false;
-                } else if line == "!mem" {
-                    should_print_stack = false;
-                    if memory.len() == 0 {
-                        println!("The memory has not been initialized yet");
-                        continue;
-                    }
-                    for (addr, mem) in &memory {
-                        // prints out the address and memory value at that address.
-                        print_mem_address(*addr, mem);
-                    }
-                } else if line.len() > 6 && &line[..5] == "!mem[" {
-                    // if user wants to see the state of a particular address in a memory, the input should be atleast
-                    // of length 5.
+//         if !program_lines.is_empty() {
+//             match result {
+//                 Ok((mem, stack_state)) => {
+//                     if should_print_stack {
+//                         print_stack(stack_state);
+//                     }
+//                     memory = mem;
+//                 }
+//                 Err(e) => {
+//                     println!("{}", format!("Error running program: {:?}", e));
+//                     program_lines.pop();
+//                 }
+//             }
+//         } else {
+//             if should_print_stack {
+//                 println!("{}", str::repeat("0 ", 16));
+//             }
+//         }
+//         match rl.readline(">> ") {
+//             Ok(line) => {
+//                 if line == "!program" {
+//                     println!("{}", program);
+//                     should_print_stack = false;
+//                 } else if line == "!help" {
+//                     // prints out all the available commands in the Miden Repl tool.
+//                     print_instructions();
+//                     should_print_stack = false;
+//                 } else if line == "!mem" {
+//                     should_print_stack = false;
+//                     if memory.len() == 0 {
+//                         println!("The memory has not been initialized yet");
+//                         continue;
+//                     }
+//                     for (addr, mem) in &memory {
+//                         // prints out the address and memory value at that address.
+//                         print_mem_address(*addr, mem);
+//                     }
+//                 } else if line.len() > 6 && &line[..5] == "!mem[" {
+//                     // if user wants to see the state of a particular address in a memory, the input should be atleast
+//                     // of length 5.
 
-                    // flag to determine if the memory at an address has been initialized or not
-                    let mut mem_at_addr_present = false;
+//                     // flag to determine if the memory at an address has been initialized or not
+//                     let mut mem_at_addr_present = false;
 
-                    // extracts the address from user input.
-                    match read_mem_address(&line) {
-                        Ok(addr) => {
-                            for (i, memory_value) in &memory {
-                                if *i == addr {
-                                    // prints the address and memory value at that address.
-                                    print_mem_address(addr, memory_value);
-                                    // sets the flag to true as the address has been initialized.
-                                    mem_at_addr_present = true;
-                                    break;
-                                }
-                            }
-                            // incase the flag has not been initialized.
-                            if !mem_at_addr_present {
-                                println!("Memory at address {} is empty", addr);
-                            }
-                        }
-                        Err(msg) => println!("{}", msg),
-                    }
+//                     // extracts the address from user input.
+//                     match read_mem_address(&line) {
+//                         Ok(addr) => {
+//                             for (i, memory_value) in &memory {
+//                                 if *i == addr {
+//                                     // prints the address and memory value at that address.
+//                                     print_mem_address(addr, memory_value);
+//                                     // sets the flag to true as the address has been initialized.
+//                                     mem_at_addr_present = true;
+//                                     break;
+//                                 }
+//                             }
+//                             // incase the flag has not been initialized.
+//                             if !mem_at_addr_present {
+//                                 println!("Memory at address {} is empty", addr);
+//                             }
+//                         }
+//                         Err(msg) => println!("{}", msg),
+//                     }
 
-                    should_print_stack = false;
-                } else if line == "!undo" {
-                    match program_lines.pop() {
-                        Some(last_line) => {
-                            println!("Undoing {}", last_line);
-                            should_print_stack = true;
-                        }
-                        None => {
-                            println!("There's no previously executed command");
-                            should_print_stack = false;
-                        }
-                    };
-                } else if line == "!stack" {
-                    should_print_stack = true;
-                } else {
-                    rl.add_history_entry(line.clone());
-                    program_lines.push(line.clone());
-                    should_print_stack = true;
-                }
-            }
-            Err(ReadlineError::Interrupted) => {
-                println!("CTRL-C");
-                break;
-            }
-            Err(ReadlineError::Eof) => {
-                println!("CTRL-D");
-                break;
-            }
-            Err(err) => {
-                println!("Error: {:?}", err);
-                break;
-            }
-        };
-    }
-    rl.save_history("history.txt")
-        .expect("Couldn't dump the program into the history file");
-}
+//                     should_print_stack = false;
+//                 } else if line == "!undo" {
+//                     match program_lines.pop() {
+//                         Some(last_line) => {
+//                             println!("Undoing {}", last_line);
+//                             should_print_stack = true;
+//                         }
+//                         None => {
+//                             println!("There's no previously executed command");
+//                             should_print_stack = false;
+//                         }
+//                     };
+//                 } else if line == "!stack" {
+//                     should_print_stack = true;
+//                 } else {
+//                     rl.add_history_entry(line.clone());
+//                     program_lines.push(line.clone());
+//                     should_print_stack = true;
+//                 }
+//             }
+//             Err(ReadlineError::Interrupted) => {
+//                 println!("CTRL-C");
+//                 break;
+//             }
+//             Err(ReadlineError::Eof) => {
+//                 println!("CTRL-D");
+//                 break;
+//             }
+//             Err(err) => {
+//                 println!("Error: {:?}", err);
+//                 break;
+//             }
+//         };
+//     }
+//     rl.save_history("history.txt")
+//         .expect("Couldn't dump the program into the history file");
+// }
 
 /// HELPER METHODS
 /// --------------------------------------------------------------------------------------------

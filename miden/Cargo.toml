@@ -14,15 +14,6 @@ rust-version = "1.67"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[bench]]
-name = "program_compilation"
-harness = false
-
-[[bench]]
-name = "program_execution"
-harness = false
-
-
 [features]
 concurrent = ["prover/concurrent", "std"]
 default = ["std"]
@@ -31,12 +22,12 @@ std = ["assembly/std", "log/std", "processor/std", "prover/std", "verifier/std"]
 
 [dependencies]
 assembly = { package = "miden-assembly", path = "../assembly", version = "0.5", default-features = false }
-env_logger = { version = "0.10", default-features = false}
+env_logger = { version = "0.10", default-features = false }
 hex = { version = "0.4", optional = false }
 log = { version = "0.4", default-features = false }
 processor = { package = "miden-processor", path = "../processor", version = "0.5", default-features = false }
 prover = { package = "miden-prover", path = "../prover", version = "0.5", default-features = false }
-rustyline = { version = "10.0.0", default-features = false}
+# rustyline = { version = "10.0.0", default-features = false}
 # serde = {version = "1.0.117", optional = true }
 serde = { version = "1.0.117", default-features = false, features = ["derive"] }
 
@@ -69,3 +60,13 @@ vm-core = { package = "miden-core", path = "../core", version = "0.5", default-f
 winterfell = { package = "winter-prover", path = "../winterfell/prover", default-features = false }
 winter-fri = { package = "winter-fri", path = "../winterfell/fri" }
 winter-utils = { package = "winter-utils", path = "../winterfell/utils/core" }
+
+[package.metadata.wasm-pack.profile.release]
+# `wasm-opt` has some problems on linux, see
+# https://github.com/rustwasm/wasm-pack/issues/781 etc.
+wasm-opt = false
+
+
+[profile.release]
+lto = true
+opt-level = 's'
