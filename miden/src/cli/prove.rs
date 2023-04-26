@@ -1,5 +1,5 @@
 use super::data::{Debug, InputFile, Libraries, OutputFile, ProgramFile, ProofFile};
-use miden::ProofOptions;
+use miden_vm::ProofOptions;
 use std::{io::Write, path::PathBuf, time::Instant};
 use structopt::StructOpt;
 

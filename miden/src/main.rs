@@ -1,5 +1,5 @@
 use core::fmt;
-use miden::{AssemblyError, ExecutionError};
+use miden_vm::{AssemblyError, ExecutionError};
 use structopt::StructOpt;
 
 mod cli;

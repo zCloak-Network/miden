@@ -1,4 +1,4 @@
-use miden::{AdviceProvider, ExecutionProof, Program, ProgramInfo, ProofOptions, StackInputs};
+use miden_vm::{AdviceProvider, ExecutionProof, Program, ProgramInfo, ProofOptions, StackInputs};
 use std::io::Write;
 use std::time::Instant;
 use structopt::StructOpt;
@@ -82,7 +82,7 @@ impl ExampleOptions {
         // execute the program and generate the proof of execution
         let now = Instant::now();
         let (stack_outputs, proof) =
-            miden::prove(&program, stack_inputs.clone(), advice_provider, proof_options).unwrap();
+            miden_vm::prove(&program, stack_inputs.clone(), advice_provider, proof_options).unwrap();
         println!("--------------------------------");
 
         println!(
@@ -109,7 +109,7 @@ impl ExampleOptions {
         let now = Instant::now();
         let program_info = ProgramInfo::from(program);
 
-        match miden::verify(program_info, stack_inputs, stack_outputs, proof) {
+        match miden_vm::verify(program_info, stack_inputs, stack_outputs, proof) {
             Ok(_) => println!("Execution verified in {} ms", now.elapsed().as_millis()),
             Err(err) => println!("Failed to verify execution: {}", err),
         }

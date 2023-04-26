@@ -1,5 +1,5 @@
 use super::ProgramError;
-use miden::{
+use miden_vm::{
     math::{Felt, StarkField},
     MemAdviceProvider, StackInputs, Word,
 };

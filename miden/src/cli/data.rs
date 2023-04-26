@@ -1,5 +1,5 @@
 use assembly::{Library, MaslLibrary};
-use miden::{
+use miden_vm::{
     crypto::MerkleStore,
     math::Felt,
     utils::{Deserializable, SliceReader},

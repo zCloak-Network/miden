@@ -1,5 +1,5 @@
 use super::Example;
-use miden::{
+use miden_vm::{
     math::{Felt, FieldElement, StarkField},
     Assembler, MemAdviceProvider, Program, StackInputs,
 };
