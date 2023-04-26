@@ -20,11 +20,11 @@ default = ["std"]
 std = ["math/std", "winter-utils/std"]
 
 [dependencies]
-math = { package = "winter-math", version = "0.6", default-features = false }
-crypto = { package = "miden-crypto", version = "0.2", default-features = false }
-winter-crypto = { package = "winter-crypto", version = "0.6", default-features = false }
-winter-utils = { package = "winter-utils", version = "0.6", default-features = false }
+math = { package = "winter-math", path = "../winterfell/math", default-features = false }
+crypto = { package = "miden-crypto", path = "../miden-crypto", default-features = false }
+winter-crypto = { package = "winter-crypto", path = "../winterfell/crypto", default-features = false }
+winter-utils = { package = "winter-utils", path = "../winterfell/utils/core", default-features = false }
 
 [dev-dependencies]
 proptest = "1.1"
-rand_utils = { version = "0.6", package = "winter-rand-utils" }
+rand_utils = { path = "../winterfell/utils/rand", package = "winter-rand-utils" }
