@@ -8,6 +8,7 @@ use math::{StarkField, ToElements};
 use utils::{
     collections::Vec, ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable,
 };
+use serde::{Serialize, Deserialize};
 
 // CONSTANTS
 // ================================================================================================
@@ -42,7 +43,7 @@ const FRI_MAX_REMAINDER_DEGREE: usize = 255;
 /// However, increasing extension degree will increase proof generation time and proof size by
 /// as much as 50%.
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum FieldExtension {
     /// Composition polynomial is constructed in the base field.
     None = 1,
@@ -74,7 +75,7 @@ pub enum FieldExtension {
 /// is the hash function used in the protocol. The soundness of a STARK proof is limited by the
 /// collision resistance of the hash function used by the protocol. For example, if a hash function
 /// with 128-bit collision resistance is used, soundness of a STARK proof cannot exceed 128 bits.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ProofOptions {
     num_queries: u8,
     blowup_factor: u8,

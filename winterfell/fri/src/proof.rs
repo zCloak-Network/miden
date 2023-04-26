@@ -9,6 +9,7 @@ use utils::{
     collections::Vec, string::ToString, ByteReader, ByteWriter, Deserializable,
     DeserializationError, Serializable, SliceReader,
 };
+use serde::{Serialize, Deserialize};
 
 // FRI PROOF
 // ================================================================================================
@@ -28,7 +29,7 @@ use utils::{
 /// All values in a proof are stored as vectors of bytes. Thus, the values must be parsed before
 /// they can be returned to the user. To do this, [parse_layers()](FriProof::parse_layers())
 /// and [parse_remainder()](FriProof::parse_remainder()) methods can be used.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FriProof {
     layers: Vec<FriProofLayer>,
     remainder: Vec<u8>,
@@ -228,7 +229,7 @@ impl Deserializable for FriProof {
 // FRI PROOF LAYER
 // ================================================================================================
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct FriProofLayer {
     values: Vec<u8>,
     paths: Vec<u8>,

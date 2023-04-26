@@ -3,11 +3,12 @@ use super::{
     NodeIndex, RootPath, Rpo256, RpoDigest, SimpleSmt, ValuePath, Vec, Word,
 };
 use crate::utils::{ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable};
+use serde::{Serialize, Deserialize};
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Node {
     left: RpoDigest,
     right: RpoDigest,
@@ -68,7 +69,7 @@ pub struct Node {
 /// // only 10 new entries, corresponding to the 10 unique internal nodes of these trees.
 /// assert_eq!(store.num_internal_nodes() - 255, 10);
 /// ```
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct MerkleStore {
     nodes: BTreeMap<RpoDigest, Node>,
 }

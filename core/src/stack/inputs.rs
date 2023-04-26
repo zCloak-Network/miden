@@ -1,5 +1,6 @@
 use super::{vec, ByteWriter, Felt, InputError, Serializable, ToElements, Vec};
 use core::slice;
+use serde::{Deserialize, Serialize};
 
 // STACK INPUTS
 // ================================================================================================
@@ -8,7 +9,7 @@ use core::slice;
 ///
 /// The program execution expects the inputs to be a stack on the VM, and it will be stored in
 /// reversed order on this struct.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct StackInputs {
     values: Vec<Felt>,
 }

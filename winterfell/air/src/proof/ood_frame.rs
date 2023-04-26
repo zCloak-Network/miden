@@ -9,6 +9,7 @@ use utils::{
     collections::Vec, ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable,
     SliceReader,
 };
+use serde::{Serialize, Deserialize};
 
 // TYPE ALIASES
 // ================================================================================================
@@ -28,7 +29,7 @@ type ParsedOodFrame<E> = (EvaluationFrame<E>, Option<EvaluationFrame<E>>, Vec<E>
 ///
 /// Internally, the evaluations are stored as a sequence of bytes. Thus, to retrieve the
 /// evaluations, [parse()](OodFrame::parse) function should be used.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OodFrame {
     trace_states: Vec<u8>,
     evaluations: Vec<u8>,

@@ -27,6 +27,7 @@ pub use ood_frame::OodFrame;
 
 mod table;
 pub use table::Table;
+use serde::{Serialize, Deserialize};
 
 // CONSTANTS
 // ================================================================================================
@@ -47,7 +48,7 @@ const GRINDING_CONTRIBUTION_FLOOR: u32 = 80;
 ///
 /// To estimate soundness of a proof (in bits), [security_level()](StarkProof::security_level)
 /// function can be used.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct StarkProof {
     /// Basic metadata about the execution of the computation described by this proof.
     pub context: Context,

@@ -8,6 +8,7 @@ use utils::{
     collections::Vec, ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable,
     SliceReader,
 };
+use serde::{Serialize, Deserialize};
 
 // COMMITMENTS
 // ================================================================================================
@@ -21,7 +22,7 @@ use utils::{
 ///
 /// Internally, the commitments are stored as a sequence of bytes. Thus, to retrieve the
 /// commitments, [parse()](Commitments::parse) function should be used.
-#[derive(Debug, Clone, Default, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Commitments(Vec<u8>);
 
 impl Commitments {

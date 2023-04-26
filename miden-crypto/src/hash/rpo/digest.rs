@@ -3,11 +3,12 @@ use crate::utils::{
     string::String, ByteReader, ByteWriter, Deserializable, DeserializationError, Serializable,
 };
 use core::{cmp::Ordering, ops::Deref};
+use serde::{Serialize, Deserialize};
 
 // DIGEST TRAIT IMPLEMENTATIONS
 // ================================================================================================
 
-#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RpoDigest([Felt; DIGEST_SIZE]);
 
 impl RpoDigest {

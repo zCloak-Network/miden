@@ -1,6 +1,7 @@
 use super::{
     ByteWriter, Felt, Serializable, StackTopState, StarkField, ToElements, Vec, STACK_TOP_SIZE,
 };
+use serde::{Serialize, Deserialize};
 
 // STACK OUTPUTS
 // ================================================================================================
@@ -19,7 +20,7 @@ use super::{
 /// overflow table (the row representing the deepest element in the stack) and then be followed by
 /// the address (`clk` value) of each row in the table starting from the deepest element in the
 /// stack and finishing with the row which was added to the table last.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackOutputs {
     /// The elements on the stack at the end of execution.
     stack: Vec<u64>,

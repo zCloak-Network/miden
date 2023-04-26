@@ -2,6 +2,7 @@ use super::{
     AdviceInputs, AdviceProvider, AdviceSource, BTreeMap, ExecutionError, Felt, IntoBytes,
     MerklePath, MerkleStore, NodeIndex, Vec, Word,
 };
+use serde::{Serialize, Deserialize};
 
 // MEMORY ADVICE PROVIDER
 // ================================================================================================
@@ -9,7 +10,7 @@ use super::{
 /// An in-memory `[AdviceProvider]` implementation to support program execution.
 ///
 /// Uses `[BTreeMap]` as backend.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MemAdviceProvider {
     step: u32,
     stack: Vec<Felt>,
