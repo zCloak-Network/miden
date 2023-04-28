@@ -3,7 +3,8 @@
 
 // EXPORTS
 // ================================================================================================
-
+use crate::utils::string::String;
+use crate::utils::collections::Vec;
 pub use assembly::{Assembler, AssemblyError, ParsingError};
 pub use processor::{
     crypto, execute, execute_iter, utils, AdviceInputs, AdviceProvider, AsmOpInfo, ExecutionError,
@@ -71,8 +72,8 @@ pub fn generate_program_hash(program_in_assembly: String) -> String {
 }
 
 pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInput {
-    let mut stack_inita = vec![];
-    let mut advice_tapea = vec![];
+    let mut stack_inita = Vec::new();
+    let mut advice_tapea = Vec::new();
     if stack_init.len() != 0 {
         let stack_init: Vec<&str> = stack_init.split(',').collect();
         stack_inita = stack_init
@@ -105,7 +106,7 @@ pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInp
 
 // #[wasm_bindgen]
 pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_result: String) -> u32 {
-    let mut stack_inita = vec![];
+    let mut stack_inita = Vec::new();
     if stack_inputs.len() != 0 {
         let stack_init: Vec<&str> = stack_inputs.split(',').collect();
         stack_inita = stack_init
