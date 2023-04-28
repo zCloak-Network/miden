@@ -1,208 +1,247 @@
-use core::convert::{TryFrom, TryInto};
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
+#[macro_use]
+extern crate alloc;
+
 use vm_core::{
-    hasher, op_sponge, opcodes, BASE_CYCLE_LENGTH, CF_OP_BITS_RANGE, HD_OP_BITS_RANGE,
-    LD_OP_BITS_RANGE, MIN_CONTEXT_DEPTH, MIN_LOOP_DEPTH, NUM_CF_OPS, NUM_HD_OPS, NUM_LD_OPS,
-    OP_COUNTER_IDX, OP_SPONGE_RANGE,
+    utils::{collections::Vec, ByteWriter, Serializable},
+    ExtensionOf, ProgramInfo, StackInputs, StackOutputs, CLK_COL_IDX, FMP_COL_IDX, ONE,
+    STACK_TRACE_OFFSET, ZERO,
 };
 use winter_air::{
-    Air, AirContext, Assertion, EvaluationFrame, ProofOptions as WinterProofOptions, TraceInfo,
-    TransitionConstraintDegree,
+    Air, AirContext, Assertion, AuxTraceRandElements, EvaluationFrame,
+    ProofOptions as WinterProofOptions, TraceInfo, TransitionConstraintDegree,
 };
-use winter_utils::{group_slice_elements, ByteWriter, Serializable};
 
-mod decoder;
-mod options;
-mod stack;
-mod transition;
+mod chiplets;
+mod proof;
+mod range;
+
 mod utils;
+use utils::TransitionConstraintRange;
+
+// exported publicly for benchmarking purposes
+pub mod stack;
 
 // EXPORTS
 // ================================================================================================
 
-pub use options::ProofOptions;
-pub use transition::VmTransition;
+pub use proof::{ExecutionProof, HashFunction, ProofOptions};
 pub use vm_core::{
-    utils::ToElements, BaseElement, FieldElement, StarkField, TraceState, MAX_OUTPUTS,
-    MIN_TRACE_LENGTH,
+    utils::{DeserializationError, ToElements},
+    Felt, FieldElement, StarkField,
 };
-pub use winter_air::{FieldExtension, HashFunction};
+pub use winter_air::FieldExtension;
 
 // PROCESSOR AIR
 // ================================================================================================
 
+/// TODO: add docs
 pub struct ProcessorAir {
-    context: AirContext<BaseElement>,
-    op_count: usize,
-    inputs: Vec<BaseElement>,
-    outputs: Vec<BaseElement>,
-    program_hash: [BaseElement; op_sponge::DIGEST_SIZE],
-    ctx_depth: usize,
-    loop_depth: usize,
-    stack_depth: usize,
-    decoder_constraint_count: usize,
+    context: AirContext<Felt>,
+    stack_inputs: StackInputs,
+    stack_outputs: StackOutputs,
+    constraint_ranges: TransitionConstraintRange,
+}
+
+impl ProcessorAir {
+    /// Returns last step of the execution trace.
+    pub fn last_step(&self) -> usize {
+        self.trace_length() - self.context().num_transition_exemptions()
+    }
 }
 
 impl Air for ProcessorAir {
-    type BaseElement = BaseElement;
+    type BaseField = Felt;
     type PublicInputs = PublicInputs;
 
     fn new(trace_info: TraceInfo, pub_inputs: PublicInputs, options: WinterProofOptions) -> Self {
-        let meta = TraceMetadata::from_trace_info(&trace_info);
+        // --- system -----------------------------------------------------------------------------
+        let mut main_degrees = vec![
+            TransitionConstraintDegree::new(1), // clk' = clk + 1
+        ];
 
-        let mut tcd = decoder::get_transition_constraint_degrees(meta.ctx_depth, meta.loop_depth);
-        let decoder_constraint_count = tcd.len();
-        tcd.append(&mut stack::get_transition_constraint_degrees(
-            meta.stack_depth,
-        ));
+        // --- stack constraints -------------------------------------------------------------------
+        let mut stack_degrees = stack::get_transition_constraint_degrees();
+        main_degrees.append(&mut stack_degrees);
+
+        // --- range checker ----------------------------------------------------------------------
+        let mut range_checker_degrees = range::get_transition_constraint_degrees();
+        main_degrees.append(&mut range_checker_degrees);
+
+        let aux_degrees = range::get_aux_transition_constraint_degrees();
+
+        // --- chiplets (hasher, bitwise, memory) -------------------------
+        let mut chiplets_degrees = chiplets::get_transition_constraint_degrees();
+        main_degrees.append(&mut chiplets_degrees);
+
+        // Define the transition constraint ranges.
+        let constraint_ranges = TransitionConstraintRange::new(
+            1,
+            stack::get_transition_constraint_count(),
+            range::get_transition_constraint_count(),
+            chiplets::get_transition_constraint_count(),
+        );
+
+        // Define the number of boundary constraints for the main execution trace segment.
+        // TODO: determine dynamically
+        let num_main_assertions =
+            2 + stack::NUM_ASSERTIONS + range::NUM_ASSERTIONS + chiplets::NUM_ASSERTIONS;
+
+        // Define the number of boundary constraints for the auxiliary execution trace segment.
+        let num_aux_assertions = stack::NUM_AUX_ASSERTIONS + range::NUM_AUX_ASSERTIONS;
+
+        // Create the context and set the number of transition constraint exemptions to two; this
+        // allows us to inject random values into the last row of the execution trace.
+        let context = AirContext::new_multi_segment(
+            trace_info,
+            main_degrees,
+            aux_degrees,
+            num_main_assertions,
+            num_aux_assertions,
+            options,
+        )
+        .set_num_transition_exemptions(2);
 
         Self {
-            context: AirContext::new(trace_info, tcd, options),
-            op_count: meta.op_count,
-            inputs: pub_inputs.inputs,
-            outputs: pub_inputs.outputs,
-            program_hash: pub_inputs.program_hash,
-            ctx_depth: meta.ctx_depth,
-            loop_depth: meta.loop_depth,
-            stack_depth: meta.stack_depth,
-            decoder_constraint_count,
+            context,
+            stack_inputs: pub_inputs.stack_inputs,
+            stack_outputs: pub_inputs.stack_outputs,
+            constraint_ranges,
         }
     }
 
-    fn get_periodic_column_values(&self) -> Vec<Vec<Self::BaseElement>> {
-        let mut result = Vec::new();
-        for mask in decoder::MASKS.iter() {
-            result.push(mask.to_elements());
-        }
+    // PERIODIC COLUMNS
+    // --------------------------------------------------------------------------------------------
 
-        for ark in hasher::ARK.iter() {
-            result.push(ark.to_vec());
-        }
-
-        result
+    /// Returns a set of periodic columns for the ProcessorAir.
+    fn get_periodic_column_values(&self) -> Vec<Vec<Felt>> {
+        chiplets::get_periodic_column_values()
     }
+
+    // ASSERTIONS
+    // --------------------------------------------------------------------------------------------
 
     #[allow(clippy::vec_init_then_push)]
-    fn get_assertions(&self) -> Vec<Assertion<BaseElement>> {
+    fn get_assertions(&self) -> Vec<Assertion<Felt>> {
         let mut result = Vec::new();
 
         // --- set assertions for the first step --------------------------------------------------
+        // first value of clk is 0
+        result.push(Assertion::single(CLK_COL_IDX, 0, Felt::ZERO));
 
-        // make sure op_counter is set to zero
-        result.push(Assertion::single(OP_COUNTER_IDX, 0, BaseElement::ZERO));
+        // first value of fmp is 2^30
+        result.push(Assertion::single(FMP_COL_IDX, 0, Felt::new(2u64.pow(30))));
 
-        // make sure instruction sponge registers are set to zeros
-        for i in OP_SPONGE_RANGE {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
+        // add initial assertions for the stack.
+        stack::get_assertions_first_step(&mut result, self.stack_inputs.values());
 
-        // make sure cf_bits are set to HACC (000)
-        for i in CF_OP_BITS_RANGE {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
+        // Add initial assertions for the range checker.
+        range::get_assertions_first_step(&mut result);
 
-        // make sure low-degree op_bits are set to BEGIN (0000)
-        for i in LD_OP_BITS_RANGE {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
-
-        // make sure high-degree op_bits are set to BEGIN (00)
-        for i in HD_OP_BITS_RANGE {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
-
-        // make sure all context stack registers are zeros
-        let ctx_stack_start = HD_OP_BITS_RANGE.end;
-        let ctx_stack_end = ctx_stack_start + self.ctx_depth;
-        for i in ctx_stack_start..ctx_stack_end {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
-
-        // make sure all loop stack registers are 0s
-        let loop_stack_start = ctx_stack_end;
-        let loop_stack_end = loop_stack_start + self.loop_depth;
-        for i in loop_stack_start..loop_stack_end {
-            result.push(Assertion::single(i, 0, BaseElement::ZERO));
-        }
-
-        // make sure user stack registers are set to inputs
-        let user_stack_start = loop_stack_end;
-        for (i, &input_value) in self.inputs.iter().enumerate() {
-            result.push(Assertion::single(user_stack_start + i, 0, input_value));
-        }
+        // Add initial assertions for the chiplets.
+        chiplets::get_assertions_first_step(&mut result);
 
         // --- set assertions for the last step ---------------------------------------------------
-        let last_step = self.trace_length() - 1;
+        let last_step = self.last_step();
 
-        // make sure op_counter register is set to the claimed value of operations
-        result.push(Assertion::single(
-            OP_COUNTER_IDX,
-            last_step,
-            BaseElement::new(self.op_count as u128),
-        ));
+        // add the stack's assertions for the last step.
+        stack::get_assertions_last_step(&mut result, last_step, &self.stack_outputs);
 
-        // make sure operation sponge contains program hash
-        let program_hash_start = OP_SPONGE_RANGE.start;
-        for (i, &value) in self.program_hash.iter().enumerate() {
-            result.push(Assertion::single(program_hash_start + i, last_step, value));
-        }
-
-        // make sure control flow op_bits are set VOID (111)
-        for i in CF_OP_BITS_RANGE {
-            result.push(Assertion::single(i, last_step, BaseElement::ONE));
-        }
-
-        // make sure low-degree op_bits are set to NOOP (11111)
-        for i in LD_OP_BITS_RANGE {
-            result.push(Assertion::single(i, last_step, BaseElement::ONE));
-        }
-
-        // make sure high-degree op_bits are set to NOOP (11)
-        for i in HD_OP_BITS_RANGE {
-            result.push(Assertion::single(i, last_step, BaseElement::ONE));
-        }
-
-        // make sure all context stack registers are zeros
-        for i in ctx_stack_start..ctx_stack_end {
-            result.push(Assertion::single(i, last_step, BaseElement::ZERO));
-        }
-
-        // make sure all loop stack registers are 0s
-        for i in loop_stack_start..loop_stack_end {
-            result.push(Assertion::single(i, last_step, BaseElement::ZERO));
-        }
-
-        // make sure user stack registers are set to outputs
-        for (i, &output_value) in self.outputs.iter().enumerate() {
-            result.push(Assertion::single(
-                user_stack_start + i,
-                last_step,
-                output_value,
-            ));
-        }
+        // Add the range checker's assertions for the last step.
+        range::get_assertions_last_step(&mut result, last_step);
 
         result
     }
 
-    fn evaluate_transition<E: FieldElement<BaseField = BaseElement>>(
+    fn get_aux_assertions<E: FieldElement<BaseField = Self::BaseField>>(
+        &self,
+        aux_rand_elements: &winter_air::AuxTraceRandElements<E>,
+    ) -> Vec<Assertion<E>> {
+        let mut result: Vec<Assertion<E>> = Vec::new();
+
+        // --- set assertions for the first step --------------------------------------------------
+
+        // add initial assertions for the stack's auxiliary columns.
+        stack::get_aux_assertions_first_step(
+            &mut result,
+            aux_rand_elements,
+            self.stack_inputs.values(),
+        );
+
+        // Add initial assertions for the range checker's auxiliary columns.
+        range::get_aux_assertions_first_step(&mut result);
+
+        // --- set assertions for the last step ---------------------------------------------------
+        let last_step = self.last_step();
+
+        // add the stack's auxiliary column assertions for the last step.
+        stack::get_aux_assertions_last_step(
+            &mut result,
+            aux_rand_elements,
+            &self.stack_outputs,
+            last_step,
+        );
+
+        // Add the range checker's auxiliary column assertions for the last step.
+        range::get_aux_assertions_last_step(&mut result, last_step);
+
+        result
+    }
+
+    // TRANSITION CONSTRAINTS
+    // --------------------------------------------------------------------------------------------
+
+    fn evaluate_transition<E: FieldElement<BaseField = Felt>>(
         &self,
         frame: &EvaluationFrame<E>,
         periodic_values: &[E],
         result: &mut [E],
     ) {
-        let mut transition = VmTransition::new(self.ctx_depth, self.loop_depth, self.stack_depth);
-        transition.update(frame);
+        let current = frame.current();
+        let next = frame.next();
 
-        let (masks, ark) = periodic_values.split_at(decoder::MASKS.len());
+        // --- system -----------------------------------------------------------------------------
+        // clk' = clk + 1
+        result[0] = next[CLK_COL_IDX] - (current[CLK_COL_IDX] + E::ONE);
 
-        decoder::enforce_constraints(&transition, masks, ark, result);
-        stack::enforce_constraints(
-            &transition,
-            ark,
-            &mut result[self.decoder_constraint_count..],
+        // --- stack operations -------------------------------------------------------------------
+        stack::enforce_constraints::<E>(
+            frame,
+            select_result_range!(result, self.constraint_ranges.stack),
+        );
+
+        // --- range checker ----------------------------------------------------------------------
+        range::enforce_constraints::<E>(
+            frame,
+            select_result_range!(result, self.constraint_ranges.range_checker),
+        );
+
+        // --- chiplets (hasher, bitwise, memory) -------------------------
+        chiplets::enforce_constraints::<E>(
+            frame,
+            periodic_values,
+            select_result_range!(result, self.constraint_ranges.chiplets),
         );
     }
 
-    fn context(&self) -> &AirContext<BaseElement> {
+    fn evaluate_aux_transition<F, E>(
+        &self,
+        main_frame: &EvaluationFrame<F>,
+        aux_frame: &EvaluationFrame<E>,
+        _periodic_values: &[F],
+        aux_rand_elements: &AuxTraceRandElements<E>,
+        result: &mut [E],
+    ) where
+        F: FieldElement<BaseField = Felt>,
+        E: FieldElement<BaseField = Felt> + ExtensionOf<F>,
+    {
+        // --- range checker ----------------------------------------------------------------------
+        range::enforce_aux_constraints::<F, E>(main_frame, aux_frame, aux_rand_elements, result);
+    }
+
+    fn context(&self) -> &AirContext<Felt> {
         &self.context
     }
 }
@@ -210,63 +249,40 @@ impl Air for ProcessorAir {
 // PUBLIC INPUTS
 // ================================================================================================
 
+#[derive(Debug)]
 pub struct PublicInputs {
-    program_hash: [BaseElement; op_sponge::DIGEST_SIZE],
-    inputs: Vec<BaseElement>,
-    outputs: Vec<BaseElement>,
+    program_info: ProgramInfo,
+    stack_inputs: StackInputs,
+    stack_outputs: StackOutputs,
 }
 
 impl PublicInputs {
-    pub fn new(program_hash: [u8; 32], inputs: &[u128], outputs: &[u128]) -> Self {
-        let program_hash: &[[u8; 16]] = group_slice_elements(&program_hash);
-        let program_hash = [
-            BaseElement::try_from(program_hash[0]).unwrap(),
-            BaseElement::try_from(program_hash[1]).unwrap(),
-        ];
-
+    pub fn new(
+        program_info: ProgramInfo,
+        stack_inputs: StackInputs,
+        stack_outputs: StackOutputs,
+    ) -> Self {
         Self {
-            program_hash,
-            inputs: inputs
-                .iter()
-                .map(|&v| BaseElement::try_from(v).unwrap())
-                .collect(),
-            outputs: outputs
-                .iter()
-                .map(|&v| BaseElement::try_from(v).unwrap())
-                .collect(),
+            program_info,
+            stack_inputs,
+            stack_outputs,
         }
     }
 }
 
 impl Serializable for PublicInputs {
     fn write_into<W: ByteWriter>(&self, target: &mut W) {
-        target.write(&self.program_hash[..]);
-        target.write(&self.inputs);
-        target.write(&self.outputs);
+        self.program_info.write_into(target);
+        self.stack_inputs.write_into(target);
+        self.stack_outputs.write_into(target);
     }
 }
 
-// TRACE METADATA
-// ================================================================================================
-
-pub struct TraceMetadata {
-    pub op_count: usize,
-    pub ctx_depth: usize,
-    pub loop_depth: usize,
-    pub stack_depth: usize,
-}
-
-impl TraceMetadata {
-    pub fn from_trace_info(trace_info: &TraceInfo) -> Self {
-        let op_count = u64::from_le_bytes(trace_info.meta()[..8].try_into().unwrap()) as usize;
-        let ctx_depth = trace_info.meta()[8] as usize;
-        let loop_depth = trace_info.meta()[9] as usize;
-        let decoder_width = TraceState::<BaseElement>::compute_decoder_width(ctx_depth, loop_depth);
-        TraceMetadata {
-            op_count,
-            ctx_depth,
-            loop_depth,
-            stack_depth: trace_info.width() - decoder_width,
-        }
+impl vm_core::ToElements<Felt> for PublicInputs {
+    fn to_elements(&self) -> Vec<Felt> {
+        let mut result = self.program_info.to_elements();
+        result.append(&mut self.stack_inputs.to_elements());
+        result.append(&mut self.stack_outputs.to_elements());
+        result
     }
 }

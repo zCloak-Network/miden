@@ -1,31 +1,72 @@
 [package]
-name = "miden"
-version = "0.1.0"
+name = "miden-vm"
+version = "0.5.0"
 description="Miden virtual machine"
 authors = ["miden contributors"]
 readme="README.md"
 license = "MIT"
-repository = "https://github.com/maticnetwork/miden"
+repository = "https://github.com/0xPolygonMiden/miden-vm"
 categories = ["cryptography", "emulators", "no-std"]
 keywords = ["miden", "stark", "virtual-machine", "zkp"]
-edition = "2018"
+edition = "2021"
+rust-version = "1.67"
 
 [lib]
-name = "miden"
-path = "src/lib.rs"
-bench = false
-doctest = false
+crate-type = ["cdylib", "rlib"]
 
 [features]
 concurrent = ["prover/concurrent", "std"]
-default = ["std"]
-std = ["air/std", "assembly/std", "hex/std", "processor/std", "prover/std", "verifier/std"]
+default = ["std","serde_json/std"]
+executable = [ "hex/std", "processor/internals", "std", "serde/std"]
+std = ["assembly/std", "log/std", "processor/std", "prover/std", "verifier/std","serde_json/std"]
 
 [dependencies]
-air = { package = "miden-air", path = "../air", version = "0.1", default-features = false }
-assembly = { package = "miden-assembly", path = "../assembly", version = "0.1", default-features = false }
-processor = { package = "miden-processor", path = "../processor", version = "0.1", default-features = false }
-prover = { package = "winter-prover", version = "0.2", default-features = false }
-hex = { version = "0.4", optional = true }
+assembly = { package = "miden-assembly", path = "../assembly", version = "0.5", default-features = false }
+env_logger = { version = "0.10", default-features = false }
+hex = { version = "0.4", optional = false }
 log = { version = "0.4", default-features = false }
-verifier = { package = "miden-verifier", path = "../verifier", version = "0.1", default-features = false }
+processor = { package = "miden-processor", path = "../processor", version = "0.5", default-features = false }
+prover = { package = "miden-prover", path = "../prover", version = "0.5", default-features = false }
+# rustyline = { version = "10.0.0", default-features = false}
+# serde = {version = "1.0.117", optional = true }
+serde = { version = "1.0.117", default-features = false, features = ["derive"] }
+serde_derive = {version = "1.0.117", default-features = false}
+serde_json = {version = "1.0.59", features = ["std"], default-features = false }
+stdlib = { package = "miden-stdlib", path = "../stdlib", version = "0.4", default-features = false }
+structopt = { version = "0.3", default-features = false }
+verifier = { package = "miden-verifier", path = "../verifier", version = "0.5", default-features = false }
+vm_core = {package = "miden-core", path = "../core", default-features = false}
+wasm-bindgen = "0.2.83"
+wasm-bindgen-test = "0.3.24"
+console_error_panic_hook = "0.1.6"
+winterfell = { package = "winter-prover", path = "../winterfell/prover", default-features = false }
+
+
+
+[dev-dependencies]
+assert_cmd = "2.0"
+blake3 = "1.3"
+criterion = "0.4"
+escargot = "0.5.7"
+num-bigint = "0.4"
+predicates = "2.1.5"
+processor = { package = "miden-processor", path = "../processor", version = "0.5", features = ["internals"], default-features = false }
+proptest = "1.1"
+rand-utils = { package = "winter-rand-utils", path = "../winterfell/utils/rand" }
+sha2 = "0.10"
+sha3 = "0.10"
+test-case = "3.0.0"
+vm-core = { package = "miden-core", path = "../core", version = "0.5", default-features = false }
+winterfell = { package = "winter-prover", path = "../winterfell/prover", default-features = false }
+winter-fri = { package = "winter-fri", path = "../winterfell/fri" }
+winter-utils = { package = "winter-utils", path = "../winterfell/utils/core" }
+
+[package.metadata.wasm-pack.profile.release]
+# `wasm-opt` has some problems on linux, see
+# https://github.com/rustwasm/wasm-pack/issues/781 etc.
+wasm-opt = false
+
+
+[profile.release]
+lto = true
+opt-level = 's'

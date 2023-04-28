@@ -1,26 +1,35 @@
 [package]
 name = "miden-processor"
-version = "0.1.0"
+version = "0.5.0"
 description = "Miden VM processor"
 authors = ["miden contributors"]
 readme = "README.md"
 license = "MIT"
-repository = "https://github.com/maticnetwork/miden"
+repository = "https://github.com/0xPolygonMiden/miden-vm"
 categories = ["emulators", "no-std"]
 keywords = ["miden", "virtual-machine"]
-edition = "2018"
+edition = "2021"
+rust-version = "1.67"
 
 [lib]
 bench = false
 doctest = false
 
 [features]
+concurrent = ["winter-prover/concurrent", "std"]
 default = ["std"]
-std = ["vm-core/std", "winterfell/std"]
+internals = []
+std = ["vm-core/std", "winter-prover/std", "log/std"]
 
 [dependencies]
-vm-core = { package = "miden-core", path = "../core", version = "0.1", default-features = false }
-winterfell = { package = "winter-prover", version = "0.2", default-features = false }
+log = "0.4.14"
+vm-core = { package = "miden-core", path = "../core", version = "0.5", default-features = false }
+winter-prover = { package = "winter-prover", path = "../winterfell/prover", default-features = false }
+serde = { version = "1.0.117", default-features = false, features = ["derive"] }
 
 [dev-dependencies]
-rand-utils = { package = "winter-rand-utils", version = "0.2" }
+logtest = { version = "2.0", default-features = false  }
+miden-assembly = { package = "miden-assembly", path = "../assembly", version = "0.5", default-features = false }
+rand-utils = { package = "winter-rand-utils", path = "../winterfell/utils/rand" }
+winter-fri = { package = "winter-fri", path = "../winterfell/fri" }
+winter-utils = { package = "winter-utils", path = "../winterfell/utils/core" }
