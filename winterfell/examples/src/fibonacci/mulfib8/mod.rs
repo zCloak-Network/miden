@@ -7,7 +7,7 @@ use super::utils::compute_mulfib_term;
 use crate::{Blake3_192, Blake3_256, Example, ExampleOptions, HashFunction, Sha3_256};
 use core::marker::PhantomData;
 use log::debug;
-use std::time::Instant;
+// use std::time::Instant;
 use winterfell::{
     crypto::{DefaultRandomCoin, ElementHasher},
     math::{fields::f128::BaseElement, FieldElement},
@@ -64,13 +64,13 @@ impl<H: ElementHasher> MulFib8Example<H> {
         );
 
         // compute Fibonacci sequence
-        let now = Instant::now();
+        // let now = Instant::now();
         let result = compute_mulfib_term(sequence_length);
-        debug!(
-            "Computed multiplicative Fibonacci sequence up to {}th term in {} ms",
-            sequence_length,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Computed multiplicative Fibonacci sequence up to {}th term in {} ms",
+        //     sequence_length,
+        //     now.elapsed().as_millis()
+        // );
 
         MulFib8Example {
             options,
@@ -100,16 +100,16 @@ where
         let prover = MulFib8Prover::<H>::new(self.options.clone());
 
         // generate execution trace
-        let now = Instant::now();
+        // let now = Instant::now();
         let trace = prover.build_trace(sequence_length);
         let trace_width = trace.width();
         let trace_length = trace.length();
-        debug!(
-            "Generated execution trace of {} registers and 2^{} steps in {} ms",
-            trace_width,
-            trace_length.ilog2(),
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated execution trace of {} registers and 2^{} steps in {} ms",
+        //     trace_width,
+        //     trace_length.ilog2(),
+        //     now.elapsed().as_millis()
+        // );
 
         // generate the proof
         prover.prove(trace).unwrap()

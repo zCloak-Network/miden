@@ -7,7 +7,7 @@ use super::utils::compute_fib_term;
 use crate::{Example, ExampleOptions, HashFunction};
 use core::marker::PhantomData;
 use log::debug;
-use std::time::Instant;
+// use std::time::Instant;
 use winterfell::{
     crypto::{DefaultRandomCoin, ElementHasher},
     math::{fields::f64::BaseElement, FieldElement},
@@ -87,13 +87,13 @@ impl<H: ElementHasher> FibExample<H> {
         );
 
         // compute Fibonacci sequence
-        let now = Instant::now();
+        // let now = Instant::now();
         let result = compute_fib_term::<BaseElement>(sequence_length);
-        debug!(
-            "Computed Fibonacci sequence up to {}th term in {} ms",
-            sequence_length,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Computed Fibonacci sequence up to {}th term in {} ms",
+        //     sequence_length,
+        //     now.elapsed().as_millis()
+        // );
 
         FibExample {
             options,
@@ -122,17 +122,17 @@ where
         let prover = FibSmallProver::<H>::new(self.options.clone());
 
         // generate execution trace
-        let now = Instant::now();
+        // let now = Instant::now();
         let trace = prover.build_trace(self.sequence_length);
 
         let trace_width = trace.width();
         let trace_length = trace.length();
-        debug!(
-            "Generated execution trace of {} registers and 2^{} steps in {} ms",
-            trace_width,
-            trace_length.ilog2(),
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated execution trace of {} registers and 2^{} steps in {} ms",
+        //     trace_width,
+        //     trace_length.ilog2(),
+        //     now.elapsed().as_millis()
+        // );
 
         // generate the proof
         prover.prove(trace).unwrap()

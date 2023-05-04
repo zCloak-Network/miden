@@ -36,7 +36,7 @@ pub struct VMResult {
     pub starkproof: ExecutionProof,
 }
 
-// #[wasm_bindgen]
+#[wasm_bindgen]
 pub fn execute_zk_program(program_code: String, stack_init: String, advice_tape: String) -> String {
     let options = ProofOptions::with_96_bit_security();
 
@@ -61,7 +61,7 @@ pub fn execute_zk_program(program_code: String, stack_init: String, advice_tape:
     return final_result;
 }
 
-// #[wasm_bindgen]
+#[wasm_bindgen]
 pub fn generate_program_hash(program_in_assembly: String) -> String {
     let assembler = Assembler::default().with_library(&stdlib::StdLibrary::default()).unwrap();
     let program = assembler.compile(&program_in_assembly).unwrap();
@@ -104,7 +104,7 @@ pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInp
     return inputs;
 }
 
-// #[wasm_bindgen]
+#[wasm_bindgen]
 pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_result: String) -> u32 {
     let mut stack_inita = Vec::new();
     if stack_inputs.len() != 0 {
@@ -131,7 +131,7 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_resul
     return security_level;
 }
 
-// #[wasm_bindgen]
+#[wasm_bindgen]
 pub fn init_panic_hook() {
     console_error_panic_hook::set_once();
 }

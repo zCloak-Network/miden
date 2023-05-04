@@ -1,6 +1,6 @@
 use super::data::{InputFile, OutputFile, ProgramHash, ProofFile};
 use miden_vm::{Kernel, ProgramInfo};
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf};
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
@@ -42,7 +42,7 @@ impl VerifyCmd {
         let proof = ProofFile::read(&Some(self.proof_file.clone()), &self.proof_file)?;
 
         println!("verifying program...");
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // TODO accept kernel as CLI argument
         let kernel = Kernel::default();
@@ -52,7 +52,7 @@ impl VerifyCmd {
         verifier::verify(program_info, stack_inputs, outputs_data.stack_outputs(), proof)
             .map_err(|err| format!("Program failed verification! - {}", err))?;
 
-        println!("Verification complete in {} ms", now.elapsed().as_millis());
+        // println!("Verification complete in {} ms", now.elapsed().as_millis());
 
         Ok(())
     }
