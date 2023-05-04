@@ -1,6 +1,6 @@
 use miden_vm::{AdviceProvider, ExecutionProof, Program, ProgramInfo, ProofOptions, StackInputs};
 use std::io::Write;
-use std::time::Instant;
+// use std::time::Instant;
 use structopt::StructOpt;
 
 pub mod fibonacci;
@@ -80,17 +80,17 @@ impl ExampleOptions {
         println!("--------------------------------");
 
         // execute the program and generate the proof of execution
-        let now = Instant::now();
+        // let now = Instant::now();
         let (stack_outputs, proof) =
             miden_vm::prove(&program, stack_inputs.clone(), advice_provider, proof_options)
                 .unwrap();
         println!("--------------------------------");
 
-        println!(
-            "Executed program in {} ms",
-            //hex::encode(program.hash()), // TODO: include into message
-            now.elapsed().as_millis()
-        );
+        // println!(
+        //     "Executed program in {} ms",
+        //     //hex::encode(program.hash()), // TODO: include into message
+        //     now.elapsed().as_millis()
+        // );
         println!("Stack outputs: {:?}", stack_outputs.stack_truncated(num_outputs));
         assert_eq!(
             expected_result,
@@ -107,11 +107,11 @@ impl ExampleOptions {
         // verify that executing a program with a given hash and given inputs
         // results in the expected output
         let proof = ExecutionProof::from_bytes(&proof_bytes).unwrap();
-        let now = Instant::now();
+        // let now = Instant::now();
         let program_info = ProgramInfo::from(program);
 
         match miden_vm::verify(program_info, stack_inputs, stack_outputs, proof) {
-            Ok(_) => println!("Execution verified in {} ms", now.elapsed().as_millis()),
+            Ok(_) => println!("Execution verified"),
             Err(err) => println!("Failed to verify execution: {}", err),
         }
 

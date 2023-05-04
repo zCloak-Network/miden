@@ -9,7 +9,7 @@ use super::{
 use crate::{Blake3_192, Blake3_256, ExampleOptions, HashFunction, Sha3_256};
 use core::marker::PhantomData;
 use log::debug;
-use std::time::Instant;
+// use std::time::Instant;
 use winterfell::{
     crypto::{DefaultRandomCoin, ElementHasher},
     math::{fields::f128::BaseElement, get_power_series, FieldElement, StarkField},
@@ -70,19 +70,19 @@ impl<H: ElementHasher> LamportAggregateExample<H> {
         // generate private/public key pairs for the specified number of signatures
         let mut private_keys = Vec::with_capacity(num_signatures);
         let mut public_keys = Vec::with_capacity(num_signatures);
-        let now = Instant::now();
+        // let now = Instant::now();
         for i in 0..num_signatures {
             private_keys.push(PrivateKey::from_seed([i as u8; 32]));
             public_keys.push(private_keys[i].pub_key().to_elements());
         }
-        debug!(
-            "Generated {} private-public key pairs in {} ms",
-            num_signatures,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated {} private-public key pairs in {} ms",
+        //     num_signatures,
+        //     now.elapsed().as_millis()
+        // );
 
         // sign messages
-        let now = Instant::now();
+        // let now = Instant::now();
         let mut signatures = Vec::new();
         let mut messages = Vec::new();
         for (i, private_key) in private_keys.iter().enumerate() {
@@ -90,14 +90,14 @@ impl<H: ElementHasher> LamportAggregateExample<H> {
             signatures.push(private_key.sign(msg.as_bytes()));
             messages.push(message_to_elements(msg.as_bytes()));
         }
-        debug!(
-            "Signed {} messages in {} ms",
-            num_signatures,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Signed {} messages in {} ms",
+        //     num_signatures,
+        //     now.elapsed().as_millis()
+        // );
 
         // verify signature
-        let now = Instant::now();
+        // let now = Instant::now();
         let mut pub_keys = Vec::new();
         for (i, signature) in signatures.iter().enumerate() {
             let pk = private_keys[i].pub_key();
@@ -105,11 +105,11 @@ impl<H: ElementHasher> LamportAggregateExample<H> {
             let msg = format!("test message {i}");
             assert!(pk.verify(msg.as_bytes(), signature));
         }
-        debug!(
-            "Verified {} signature in {} ms",
-            num_signatures,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Verified {} signature in {} ms",
+        //     num_signatures,
+        //     now.elapsed().as_millis()
+        // );
 
         LamportAggregateExample {
             options,
@@ -140,15 +140,15 @@ where
         let prover =
             LamportAggregateProver::<H>::new(&self.pub_keys, &self.messages, self.options.clone());
 
-        let now = Instant::now();
+        // let now = Instant::now();
         let trace = prover.build_trace(&self.messages, &self.signatures);
         let trace_length = trace.length();
-        debug!(
-            "Generated execution trace of {} registers and 2^{} steps in {} ms",
-            trace.width(),
-            trace_length.ilog2(),
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated execution trace of {} registers and 2^{} steps in {} ms",
+        //     trace.width(),
+        //     trace_length.ilog2(),
+        //     now.elapsed().as_millis()
+        // );
 
         // generate the proof
         prover.prove(trace).unwrap()

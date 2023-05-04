@@ -1,6 +1,6 @@
 use super::data::{Debug, InputFile, Libraries, OutputFile, ProgramFile, ProofFile};
 use miden_vm::ProofOptions;
-use std::{io::Write, path::PathBuf, time::Instant};
+use std::{io::Write, path::PathBuf};
 use structopt::StructOpt;
 
 // TODO check if structopt is supporting automatic generation of list values of hash function
@@ -61,7 +61,7 @@ impl ProveCmd {
 
         let program_hash: [u8; 32] = program.hash().into();
         println!("Proving program with hash {}...", hex::encode(program_hash));
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // fetch the stack and program inputs from the arguments
         let stack_inputs = input_data.parse_stack_inputs()?;
@@ -73,9 +73,9 @@ impl ProveCmd {
                 .map_err(|err| format!("Failed to prove program - {:?}", err))?;
 
         println!(
-            "Program with hash {} proved in {} ms",
+            "Program with hash {} proved in",
             hex::encode(program_hash),
-            now.elapsed().as_millis()
+            // now.elapsed().as_millis()
         );
 
         // write proof to file

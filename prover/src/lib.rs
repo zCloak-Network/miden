@@ -13,8 +13,8 @@ use winter_prover::{ProofOptions as WinterProofOptions, Prover};
 
 #[cfg(feature = "std")]
 use log::debug;
-#[cfg(feature = "std")]
-use std::time::Instant;
+// #[cfg(feature = "std")]
+// use std::time::Instant;
 #[cfg(feature = "std")]
 use winter_prover::Trace;
 
@@ -50,16 +50,16 @@ where
     A: AdviceProvider,
 {
     // execute the program to create an execution trace
-    #[cfg(feature = "std")]
-    let now = Instant::now();
+    // #[cfg(feature = "std")]
+    // let now = Instant::now();
     let trace = processor::execute(program, stack_inputs.clone(), advice_provider)?;
-    #[cfg(feature = "std")]
-    debug!(
-        "Generated execution trace of {} columns and {} steps in {} ms",
-        trace.layout().main_trace_width(),
-        trace.length(),
-        now.elapsed().as_millis()
-    );
+    // #[cfg(feature = "std")]
+    // debug!(
+    //     "Generated execution trace of {} columns and {} steps in {} ms",
+    //     trace.layout().main_trace_width(),
+    //     trace.length(),
+    //     now.elapsed().as_millis()
+    // );
 
     let stack_outputs = trace.stack_outputs().clone();
     let hash_fn = options.hash_fn();
