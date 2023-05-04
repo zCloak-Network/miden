@@ -105,7 +105,7 @@ pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInp
 }
 
 // #[wasm_bindgen]
-pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_result: String) -> u32 {
+pub fn verify_zk_program(program_hash: String, stack_inputs: String, zk_outputs: VMResult) -> u32 {
     let mut stack_inita = Vec::new();
     if stack_inputs.len() != 0 {
         let stack_init: Vec<&str> = stack_inputs.split(',').collect();
@@ -115,7 +115,7 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_resul
             .collect();
     };
     let stack_input: StackInputs = StackInputs::new(stack_inita);
-    let zk_outputs: VMResult = serde_json::from_str(&final_result).unwrap();
+    // let zk_outputs: VMResult = serde_json::from_str(&final_result).unwrap();
 
     let bytes = hex::decode(program_hash).unwrap();
     assert_eq!(32, bytes.len());
