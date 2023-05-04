@@ -30,7 +30,7 @@ pub struct NormalInput {
     pub advice_provider: MemAdviceProvider,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VMResult {
     pub outputs: StackOutputs,
     pub starkproof: ExecutionProof,
