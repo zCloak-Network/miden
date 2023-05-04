@@ -12,7 +12,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    time::Instant,
+    // time::Instant,
 };
 use stdlib::StdLibrary;
 
@@ -348,7 +348,7 @@ impl ProgramFile {
             .map_err(|err| format!("Failed to open program file `{}` - {}", path.display(), err))?;
 
         print!("Compiling program... ");
-        let now = Instant::now();
+        // let now = Instant::now();
 
         // compile program
         let mut assembler = Assembler::default()
@@ -364,7 +364,7 @@ impl ProgramFile {
             .compile(&program_file)
             .map_err(|err| format!("Failed to compile program - {}", err))?;
 
-        println!("done ({} ms)", now.elapsed().as_millis());
+        // println!("done ({} ms)", now.elapsed().as_millis());
 
         Ok(program)
     }

@@ -10,7 +10,7 @@ use super::{
 use crate::{Blake3_192, Blake3_256, ExampleOptions, HashFunction, Sha3_256};
 use core::marker::PhantomData;
 use log::debug;
-use std::time::Instant;
+// use std::time::Instant;
 use winterfell::{
     crypto::{DefaultRandomCoin, ElementHasher},
     math::{fields::f128::BaseElement, get_power_series, FieldElement, StarkField},
@@ -73,13 +73,13 @@ impl<H: ElementHasher> LamportThresholdExample<H> {
             "number of signers must be one less than a power of 2"
         );
         // generate private/public key pairs for the specified number of signatures
-        let now = Instant::now();
+        // let now = Instant::now();
         let private_keys = build_keys(num_signers);
-        debug!(
-            "Generated {} private-public key pairs in {} ms",
-            num_signers,
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated {} private-public key pairs in {} ms",
+        //     num_signers,
+        //     now.elapsed().as_millis()
+        // );
         let public_keys = private_keys.iter().map(|k| k.pub_key()).collect();
 
         // sign the message with the subset of previously generated keys
@@ -92,12 +92,12 @@ impl<H: ElementHasher> LamportThresholdExample<H> {
         }
 
         // build the aggregated public key
-        let now = Instant::now();
+        // let now = Instant::now();
         let pub_key = AggPublicKey::new(public_keys);
-        debug!(
-            "Built aggregated public key in {} ms",
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Built aggregated public key in {} ms",
+        //     now.elapsed().as_millis()
+        // );
 
         let (options, _) = options.to_proof_options(28, 8);
 
@@ -136,15 +136,15 @@ where
         );
 
         // generate execution trace
-        let now = Instant::now();
+        // let now = Instant::now();
         let trace = prover.build_trace(&self.pub_key, self.message, &self.signatures);
         let trace_length = trace.length();
-        debug!(
-            "Generated execution trace of {} registers and 2^{} steps in {} ms",
-            trace.width(),
-            trace_length.ilog2(),
-            now.elapsed().as_millis()
-        );
+        // debug!(
+        //     "Generated execution trace of {} registers and 2^{} steps in {} ms",
+        //     trace.width(),
+        //     trace_length.ilog2(),
+        //     now.elapsed().as_millis()
+        // );
 
         // generate the proof
         prover.prove(trace).unwrap()

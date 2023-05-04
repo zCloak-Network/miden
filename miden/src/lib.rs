@@ -19,10 +19,10 @@ use serde::{Deserialize, Serialize};
 pub use verifier::{verify, VerificationError};
 extern crate wasm_bindgen;
 use vm_core::Felt;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen_test::console_log;
+// use wasm_bindgen::prelude::*;
+// use wasm_bindgen_test::console_log;
 use winterfell::{Deserializable, SliceReader};
-extern crate console_error_panic_hook;
+// extern crate console_error_panic_hook;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NormalInput {
@@ -129,9 +129,4 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_resul
     let security_level =
         verify(program_info, stack_input, zk_outputs.outputs, zk_outputs.starkproof).unwrap();
     return security_level;
-}
-
-// #[wasm_bindgen]
-pub fn init_panic_hook() {
-    console_error_panic_hook::set_once();
 }
