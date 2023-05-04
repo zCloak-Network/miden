@@ -442,7 +442,7 @@ pub trait Prover {
 
         // build the proof object
         let proof = channel.build_proof(trace_queries, constraint_queries, fri_proof);
-        #[cfg(feature = "std")]
+        // #[cfg(feature = "std")]
         // debug!("Built proof object in {} ms", now.elapsed().as_millis());
 
         Ok(proof)
