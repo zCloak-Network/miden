@@ -26,14 +26,14 @@ extern crate console_error_panic_hook;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NormalInput {
-    stack_inputs: StackInputs,
-    advice_provider: MemAdviceProvider,
+    pub stack_inputs: StackInputs,
+    pub advice_provider: MemAdviceProvider,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VMResult {
-    outputs: StackOutputs,
-    starkproof: ExecutionProof,
+    pub outputs: StackOutputs,
+    pub starkproof: ExecutionProof,
 }
 
 // #[wasm_bindgen]

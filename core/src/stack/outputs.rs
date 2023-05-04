@@ -23,9 +23,9 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StackOutputs {
     /// The elements on the stack at the end of execution.
-    stack: Vec<u64>,
+    pub stack: Vec<u64>,
     /// The overflow table row addresses required to reconstruct the final state of the table.
-    overflow_addrs: Vec<u64>,
+    pub overflow_addrs: Vec<u64>,
 }
 
 impl StackOutputs {
