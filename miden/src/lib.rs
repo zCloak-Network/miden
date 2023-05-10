@@ -105,7 +105,7 @@ pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInp
 }
 
 // #[wasm_bindgen]
-pub fn verify_zk_program(program_hash: String, stack_inputs: String, zk_outputs: VMResult) -> u32 {
+pub fn verify_zk_program(program_hash: String, stack_inputs: String, zk_outputs: VMResult) -> Result<u32, VerificationError> {
     let mut stack_inita = Vec::new();
     if stack_inputs.len() != 0 {
         let stack_init: Vec<&str> = stack_inputs.split(',').collect();
@@ -126,7 +126,7 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, zk_outputs:
     let kernel = Kernel::default();
     let program_info = ProgramInfo::new(program_digest, kernel);
 
-    let security_level =
-        verify(program_info, stack_input, zk_outputs.outputs, zk_outputs.starkproof).unwrap();
-    return security_level;
+    let verification_result =
+        verify(program_info, stack_input, zk_outputs.outputs, zk_outputs.starkproof);
+    return verification_result;
 }
