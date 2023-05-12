@@ -3,8 +3,8 @@
 
 // EXPORTS
 // ================================================================================================
-use crate::utils::string::String;
 use crate::utils::collections::Vec;
+use crate::utils::string::String;
 pub use assembly::{Assembler, AssemblyError, ParsingError};
 pub use processor::{
     crypto, execute, execute_iter, utils, AdviceInputs, AdviceProvider, AsmOpInfo, ExecutionError,
@@ -30,10 +30,18 @@ pub struct NormalInput {
     pub advice_provider: MemAdviceProvider,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct VMResult {
-    pub outputs: StackOutputs,
+    pub outputs: StackOutputsString,
     pub starkproof: ExecutionProof,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StackOutputsString {
+    /// The elements on the stack at the end of execution.
+    pub stack: Vec<String>,
+    /// The overflow table row addresses required to reconstruct the final state of the table.
+    pub overflow_addrs: Vec<String>,
 }
 
 // #[wasm_bindgen]
@@ -52,8 +60,18 @@ pub fn execute_zk_program(program_code: String, stack_init: String, advice_tape:
 
     let (outputs, proof) = res.unwrap();
 
+    let stack_string: Vec<String> = outputs.stack.iter().map(|(v)| (v.to_string())).collect();
+
+    let overflow_addrs_string: Vec<String> =
+        outputs.overflow_addrs.iter().map(|(v)| (v.to_string())).collect();
+
+    let outputs_string = StackOutputsString {
+        stack: stack_string,
+        overflow_addrs: overflow_addrs_string,
+    };
+
     let result = VMResult {
-        outputs,
+        outputs: outputs_string,
         starkproof: proof,
     };
 
@@ -104,8 +122,11 @@ pub fn convert_stackinputs(stack_init: String, advice_tape: String) -> NormalInp
     return inputs;
 }
 
-// #[wasm_bindgen]
-pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_result: String) -> u32 {
+pub fn verify_zk_program(
+    program_hash: String,
+    stack_inputs: String,
+    zk_outputs: VMResult,
+) -> Result<u32, VerificationError> {
     let mut stack_inita = Vec::new();
     if stack_inputs.len() != 0 {
         let stack_init: Vec<&str> = stack_inputs.split(',').collect();
@@ -115,7 +136,6 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_resul
             .collect();
     };
     let stack_input: StackInputs = StackInputs::new(stack_inita);
-    let zk_outputs: VMResult = serde_json::from_str(&final_result).unwrap();
 
     let bytes = hex::decode(program_hash).unwrap();
     assert_eq!(32, bytes.len());
@@ -126,7 +146,31 @@ pub fn verify_zk_program(program_hash: String, stack_inputs: String, final_resul
     let kernel = Kernel::default();
     let program_info = ProgramInfo::new(program_digest, kernel);
 
-    let security_level =
-        verify(program_info, stack_input, zk_outputs.outputs, zk_outputs.starkproof).unwrap();
-    return security_level;
+    let stack_origin = zk_outputs
+        .outputs
+        .stack
+        .iter()
+        .map(|init| init.parse::<u64>().unwrap())
+        .collect();
+
+    let overflow_addrs_origin = zk_outputs
+        .outputs
+        .overflow_addrs
+        .iter()
+        .map(|init| init.parse::<u64>().unwrap())
+        .collect();
+
+    let stack_outputs_origin = StackOutputs {
+        stack: stack_origin,
+        overflow_addrs: overflow_addrs_origin,
+    };
+
+    let verification_result =
+        verify(program_info, stack_input, stack_outputs_origin, zk_outputs.starkproof);
+    return verification_result;
 }
+
+// #[wasm_bindgen]
+// pub fn init_panic_hook() {
+//     console_error_panic_hook::set_once();
+// }
